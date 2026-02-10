@@ -1,16 +1,16 @@
 //! Resume command: continue an interrupted task.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::Args;
 use colored::Colorize;
 use crew_agent::{Agent, AgentConfig, ConsoleReporter, ToolRegistry};
 use crew_core::{AgentId, AgentRole, TaskId};
 use crew_llm::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider, LlmProvider,
-    RetryProvider,
+    LlmProvider, RetryProvider, anthropic::AnthropicProvider, gemini::GeminiProvider,
+    openai::OpenAIProvider,
 };
 use crew_memory::{EpisodeStore, TaskStore};
 use eyre::{Result, WrapErr};
@@ -77,9 +77,7 @@ impl ResumeCommand {
         println!("{}", "crew-rs".cyan().bold());
         println!();
 
-        let cwd = self
-            .cwd
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let cwd = self.cwd.unwrap_or_else(|| std::env::current_dir().unwrap());
 
         // Open task store
         let data_dir = cwd.join(".crew");
@@ -142,9 +140,7 @@ impl ResumeCommand {
         };
 
         // Parse task ID
-        let task_id: TaskId = task_id
-            .parse()
-            .wrap_err("invalid task ID format")?;
+        let task_id: TaskId = task_id.parse().wrap_err("invalid task ID format")?;
 
         // Load task state
         let state = task_store
@@ -242,11 +238,7 @@ impl ResumeCommand {
             state.token_usage.input_tokens,
             state.token_usage.output_tokens
         );
-        println!(
-            "{}: {}",
-            "Max iterations".green(),
-            self.max_iterations
-        );
+        println!("{}: {}", "Max iterations".green(), self.max_iterations);
         if let Some(max_tokens) = self.max_tokens {
             println!("{}: {}", "Token budget".green(), max_tokens);
         }
@@ -261,10 +253,7 @@ impl ResumeCommand {
         tokio::spawn(async move {
             if let Ok(()) = tokio::signal::ctrl_c().await {
                 println!();
-                println!(
-                    "{}",
-                    "Received Ctrl+C, saving state...".yellow()
-                );
+                println!("{}", "Received Ctrl+C, saving state...".yellow());
                 shutdown_clone.store(true, Ordering::Relaxed);
             }
         });
@@ -286,10 +275,7 @@ impl ResumeCommand {
             .with_shutdown(shutdown);
 
         // Resume task
-        println!(
-            "{}",
-            "(Ctrl+C to interrupt, state will be saved)".dimmed()
-        );
+        println!("{}", "(Ctrl+C to interrupt, state will be saved)".dimmed());
         println!();
 
         let task = state.task.clone();

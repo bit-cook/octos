@@ -71,11 +71,7 @@ impl LlmProvider for AnthropicProvider {
                 .iter()
                 .find(|m| m.role == crew_core::MessageRole::System)
                 .map(|m| m.content.as_str()),
-            tools: if tools.is_empty() {
-                None
-            } else {
-                Some(tools)
-            },
+            tools: if tools.is_empty() { None } else { Some(tools) },
         };
 
         let response = self
@@ -173,7 +169,9 @@ struct AnthropicResponse {
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,

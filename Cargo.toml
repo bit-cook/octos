@@ -5,6 +5,7 @@ members = [
     "crates/crew-memory",
     "crates/crew-llm",
     "crates/crew-agent",
+    "crates/crew-bus",
     "crates/crew-cli",
 ]
 
@@ -22,6 +23,7 @@ crew-core = { path = "crates/crew-core" }
 crew-memory = { path = "crates/crew-memory" }
 crew-llm = { path = "crates/crew-llm" }
 crew-agent = { path = "crates/crew-agent" }
+crew-bus = { path = "crates/crew-bus" }
 
 # codex-rs crates (reused)
 codex-execpolicy = { git = "https://github.com/openai/codex", path = "codex-rs/execpolicy" }

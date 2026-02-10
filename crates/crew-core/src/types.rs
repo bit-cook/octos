@@ -97,6 +97,22 @@ pub struct EpisodeRef {
     pub relevance_score: f32,
 }
 
+/// Unique key identifying a conversation session (channel:chat_id).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SessionKey(pub String);
+
+impl SessionKey {
+    pub fn new(channel: &str, chat_id: &str) -> Self {
+        Self(format!("{channel}:{chat_id}"))
+    }
+}
+
+impl std::fmt::Display for SessionKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +171,35 @@ mod tests {
 
         // tool_calls should be skipped when None
         assert!(!json.contains("tool_calls"));
+    }
+
+    #[test]
+    fn test_session_key_new() {
+        let key = SessionKey::new("telegram", "12345");
+        assert_eq!(key.0, "telegram:12345");
+    }
+
+    #[test]
+    fn test_session_key_display() {
+        let key = SessionKey::new("cli", "default");
+        assert_eq!(key.to_string(), "cli:default");
+    }
+
+    #[test]
+    fn test_session_key_equality() {
+        let k1 = SessionKey::new("cli", "a");
+        let k2 = SessionKey::new("cli", "a");
+        let k3 = SessionKey::new("cli", "b");
+        assert_eq!(k1, k2);
+        assert_ne!(k1, k3);
+    }
+
+    #[test]
+    fn test_session_key_serde_roundtrip() {
+        let key = SessionKey::new("discord", "guild:123");
+        let json = serde_json::to_string(&key).unwrap();
+        let parsed: SessionKey = serde_json::from_str(&json).unwrap();
+        assert_eq!(key, parsed);
     }
 
     #[test]

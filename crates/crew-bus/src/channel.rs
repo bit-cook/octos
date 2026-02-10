@@ -1,0 +1,209 @@
+//! Channel trait and manager for gateway message routing.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use crew_core::{InboundMessage, OutboundMessage};
+use eyre::Result;
+use tokio::sync::mpsc;
+use tracing::{error, info};
+
+use crate::bus::BusPublisher;
+
+/// A message channel (CLI, Telegram, Discord, etc.).
+#[async_trait]
+pub trait Channel: Send + Sync {
+    /// Channel name used for routing (e.g. "cli", "telegram").
+    fn name(&self) -> &str;
+
+    /// Start listening for messages. Long-running — sends inbound messages via tx.
+    async fn start(&self, inbound_tx: mpsc::Sender<InboundMessage>) -> Result<()>;
+
+    /// Send an outbound message through this channel.
+    async fn send(&self, msg: &OutboundMessage) -> Result<()>;
+
+    /// Check if a sender is allowed to use this channel.
+    fn is_allowed(&self, _sender_id: &str) -> bool {
+        true
+    }
+
+    /// Stop the channel gracefully.
+    async fn stop(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Manages registered channels and dispatches outbound messages.
+pub struct ChannelManager {
+    channels: HashMap<String, Arc<dyn Channel>>,
+}
+
+impl Default for ChannelManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChannelManager {
+    pub fn new() -> Self {
+        Self {
+            channels: HashMap::new(),
+        }
+    }
+
+    pub fn register(&mut self, channel: Arc<dyn Channel>) {
+        self.channels.insert(channel.name().to_string(), channel);
+    }
+
+    /// Start all channels and the outbound dispatcher.
+    /// Consumes the BusPublisher to own the outbound receiver.
+    pub async fn start_all(&self, mut publisher: BusPublisher) -> Result<()> {
+        let inbound_tx = publisher.inbound_sender();
+
+        // Spawn each channel's listener
+        for channel in self.channels.values() {
+            let ch = Arc::clone(channel);
+            let tx = inbound_tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = ch.start(tx).await {
+                    error!(channel = ch.name(), "Channel stopped with error: {e}");
+                }
+            });
+        }
+
+        // Drop extra inbound sender so bus closes when all channels stop
+        drop(inbound_tx);
+
+        // Outbound dispatcher — routes messages to the correct channel
+        let channels = self.channels.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = publisher.recv_outbound().await {
+                if let Some(channel) = channels.get(&msg.channel) {
+                    if let Err(e) = channel.send(&msg).await {
+                        error!(channel = msg.channel, "Failed to send outbound: {e}");
+                    }
+                } else {
+                    error!(
+                        channel = msg.channel,
+                        "No channel registered for outbound message"
+                    );
+                }
+            }
+            info!("Outbound dispatcher stopped");
+        });
+
+        Ok(())
+    }
+
+    pub async fn stop_all(&self) -> Result<()> {
+        for channel in self.channels.values() {
+            channel.stop().await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Mutex;
+
+    struct MockChannel {
+        channel_name: String,
+        sent: Arc<Mutex<Vec<String>>>,
+        start_count: Arc<AtomicUsize>,
+    }
+
+    impl MockChannel {
+        fn new(name: &str) -> Self {
+            Self {
+                channel_name: name.to_string(),
+                sent: Arc::new(Mutex::new(vec![])),
+                start_count: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Channel for MockChannel {
+        fn name(&self) -> &str {
+            &self.channel_name
+        }
+
+        async fn start(&self, _inbound_tx: mpsc::Sender<InboundMessage>) -> Result<()> {
+            self.start_count.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn send(&self, msg: &OutboundMessage) -> Result<()> {
+            self.sent.lock().await.push(msg.content.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_register_channels() {
+        let mut mgr = ChannelManager::new();
+        mgr.register(Arc::new(MockChannel::new("ch1")));
+        mgr.register(Arc::new(MockChannel::new("ch2")));
+        assert_eq!(mgr.channels.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_outbound() {
+        let mock = Arc::new(MockChannel::new("test"));
+        let sent = Arc::clone(&mock.sent);
+
+        let mut mgr = ChannelManager::new();
+        mgr.register(mock);
+
+        let (agent, publisher) = crate::bus::create_bus();
+        mgr.start_all(publisher).await.unwrap();
+
+        agent
+            .send_outbound(OutboundMessage {
+                channel: "test".into(),
+                chat_id: "c1".into(),
+                content: "hello from agent".into(),
+                reply_to: None,
+                media: vec![],
+                metadata: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        // Drop agent handle to close the outbound channel
+        drop(agent);
+
+        // Give dispatcher time to process
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let messages = sent.lock().await;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0], "hello from agent");
+    }
+
+    #[tokio::test]
+    async fn test_inbound_from_channel() {
+        let (mut agent, publisher) = crate::bus::create_bus();
+        let tx = publisher.inbound_sender();
+
+        tx.send(InboundMessage {
+            channel: "mock".into(),
+            sender_id: "user1".into(),
+            chat_id: "chat1".into(),
+            content: "user says hi".into(),
+            timestamp: Utc::now(),
+            media: vec![],
+            metadata: serde_json::json!({}),
+        })
+        .await
+        .unwrap();
+
+        let msg = agent.recv_inbound().await.unwrap();
+        assert_eq!(msg.content, "user says hi");
+    }
+}

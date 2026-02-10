@@ -1,7 +1,8 @@
 //! Agent implementation.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crew_core::{
@@ -10,7 +11,7 @@ use crew_core::{
 use crew_llm::{ChatConfig, ChatResponse, LlmProvider, StopReason};
 use crew_memory::{Episode, EpisodeOutcome, EpisodeStore, TaskState, TaskStore};
 use eyre::Result;
-use tracing::{debug, info, info_span, warn, Instrument};
+use tracing::{Instrument, debug, info, info_span, warn};
 
 use crate::progress::{ProgressEvent, ProgressReporter, SilentReporter};
 use crate::tools::ToolRegistry;
@@ -34,6 +35,14 @@ impl Default for AgentConfig {
             save_episodes: true,
         }
     }
+}
+
+/// Response from conversation mode (process_message).
+#[derive(Debug, Clone)]
+pub struct ConversationResponse {
+    pub content: String,
+    pub token_usage: TokenUsage,
+    pub files_modified: Vec<PathBuf>,
 }
 
 /// An agent that can execute tasks.
@@ -101,6 +110,105 @@ impl Agent {
     pub fn with_shutdown(mut self, shutdown: Arc<AtomicBool>) -> Self {
         self.shutdown = shutdown;
         self
+    }
+
+    /// Override the system prompt (e.g. for gateway mode).
+    pub fn with_system_prompt(mut self, prompt: String) -> Self {
+        self.system_prompt = prompt;
+        self
+    }
+
+    /// Process a single message in conversation mode (gateway).
+    /// Takes the user's message and conversation history, runs the agent loop,
+    /// and returns the response.
+    pub async fn process_message(
+        &self,
+        user_content: &str,
+        history: &[Message],
+    ) -> Result<ConversationResponse> {
+        let mut messages = vec![Message {
+            role: MessageRole::System,
+            content: self.system_prompt.clone(),
+            tool_calls: None,
+            tool_call_id: None,
+            timestamp: chrono::Utc::now(),
+        }];
+
+        messages.extend_from_slice(history);
+
+        messages.push(Message {
+            role: MessageRole::User,
+            content: user_content.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            timestamp: chrono::Utc::now(),
+        });
+
+        let config = ChatConfig::default();
+        let mut total_usage = TokenUsage::default();
+        let mut files_modified = Vec::new();
+        let mut iteration = 0u32;
+
+        loop {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return Ok(ConversationResponse {
+                    content: "Interrupted.".into(),
+                    token_usage: total_usage,
+                    files_modified,
+                });
+            }
+
+            if iteration >= self.config.max_iterations {
+                return Ok(ConversationResponse {
+                    content: "Reached max iterations.".into(),
+                    token_usage: total_usage,
+                    files_modified,
+                });
+            }
+
+            if let Some(max_tokens) = self.config.max_tokens {
+                let used = total_usage.input_tokens + total_usage.output_tokens;
+                if used >= max_tokens {
+                    return Ok(ConversationResponse {
+                        content: "Token budget exceeded.".into(),
+                        token_usage: total_usage,
+                        files_modified,
+                    });
+                }
+            }
+
+            iteration += 1;
+            let tools_spec = self.tools.specs();
+            let response = self.llm.chat(&messages, &tools_spec, &config).await?;
+            total_usage.input_tokens += response.usage.input_tokens;
+            total_usage.output_tokens += response.usage.output_tokens;
+
+            match response.stop_reason {
+                StopReason::EndTurn | StopReason::StopSequence => {
+                    return Ok(ConversationResponse {
+                        content: response.content.unwrap_or_default(),
+                        token_usage: total_usage,
+                        files_modified,
+                    });
+                }
+                StopReason::ToolUse => {
+                    messages.push(self.response_to_message(&response));
+                    let (tool_messages, tool_files, tool_tokens) =
+                        self.execute_tools(&response).await?;
+                    messages.extend(tool_messages);
+                    files_modified.extend(tool_files);
+                    total_usage.input_tokens += tool_tokens.input_tokens;
+                    total_usage.output_tokens += tool_tokens.output_tokens;
+                }
+                StopReason::MaxTokens => {
+                    return Ok(ConversationResponse {
+                        content: response.content.unwrap_or_default(),
+                        token_usage: total_usage,
+                        files_modified,
+                    });
+                }
+            }
+        }
     }
 
     /// Run a task to completion.

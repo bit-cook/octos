@@ -64,8 +64,8 @@ impl Tool for ReadFileTool {
     }
 
     async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
-        let input: ReadFileInput = serde_json::from_value(args.clone())
-            .wrap_err("invalid read_file tool input")?;
+        let input: ReadFileInput =
+            serde_json::from_value(args.clone()).wrap_err("invalid read_file tool input")?;
 
         // Resolve path
         let path = if PathBuf::from(&input.path).is_absolute() {
@@ -113,7 +113,12 @@ impl Tool for ReadFileTool {
 
         for (idx, line) in lines[start..end].iter().enumerate() {
             let line_num = start + idx + 1;
-            output.push_str(&format!("{:>width$}│ {}\n", line_num, line, width = line_num_width));
+            output.push_str(&format!(
+                "{:>width$}│ {}\n",
+                line_num,
+                line,
+                width = line_num_width
+            ));
         }
 
         // Add file info

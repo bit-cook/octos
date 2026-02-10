@@ -53,8 +53,8 @@ impl TaskStore {
     /// Save a task state.
     pub async fn save(&self, state: &TaskState) -> Result<()> {
         let path = self.task_path(&state.task.id);
-        let json = serde_json::to_string_pretty(state)
-            .wrap_err("failed to serialize task state")?;
+        let json =
+            serde_json::to_string_pretty(state).wrap_err("failed to serialize task state")?;
         tokio::fs::write(&path, json)
             .await
             .wrap_err_with(|| format!("failed to write task state: {}", path.display()))?;
@@ -70,8 +70,8 @@ impl TaskStore {
         let json = tokio::fs::read_to_string(&path)
             .await
             .wrap_err_with(|| format!("failed to read task state: {}", path.display()))?;
-        let state: TaskState = serde_json::from_str(&json)
-            .wrap_err("failed to parse task state")?;
+        let state: TaskState =
+            serde_json::from_str(&json).wrap_err("failed to parse task state")?;
         Ok(Some(state))
     }
 

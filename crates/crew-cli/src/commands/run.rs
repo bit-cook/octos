@@ -1,16 +1,16 @@
 //! Run command: execute a task with an agent.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::Args;
 use colored::Colorize;
 use crew_agent::{Agent, AgentConfig, ConsoleReporter, ToolRegistry};
 use crew_core::{AgentId, AgentRole, Task, TaskContext, TaskKind};
 use crew_llm::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider, LlmProvider,
-    RetryProvider,
+    LlmProvider, RetryProvider, anthropic::AnthropicProvider, gemini::GeminiProvider,
+    openai::OpenAIProvider,
 };
 use crew_memory::{EpisodeStore, TaskStore};
 use eyre::{Result, WrapErr};
@@ -83,9 +83,7 @@ impl RunCommand {
         println!("{}", "crew-rs".cyan().bold());
         println!();
 
-        let cwd = self
-            .cwd
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let cwd = self.cwd.unwrap_or_else(|| std::env::current_dir().unwrap());
         info!(cwd = %cwd.display(), goal = %self.goal, "starting task");
 
         // Load config (from file or defaults)
@@ -158,11 +156,7 @@ impl RunCommand {
             Arc::new(RetryProvider::new(base_provider))
         };
 
-        println!(
-            "{}: {}",
-            "Max iterations".green(),
-            self.max_iterations
-        );
+        println!("{}: {}", "Max iterations".green(), self.max_iterations);
         if let Some(max_tokens) = self.max_tokens {
             println!("{}: {}", "Token budget".green(), max_tokens);
         }
@@ -212,10 +206,7 @@ impl RunCommand {
         tokio::spawn(async move {
             if let Ok(()) = tokio::signal::ctrl_c().await {
                 println!();
-                println!(
-                    "{}",
-                    "Received Ctrl+C, saving state...".yellow()
-                );
+                println!("{}", "Received Ctrl+C, saving state...".yellow());
                 shutdown_clone.store(true, Ordering::Relaxed);
             }
         });

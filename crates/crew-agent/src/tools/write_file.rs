@@ -57,8 +57,8 @@ impl Tool for WriteFileTool {
     }
 
     async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
-        let input: WriteFileInput = serde_json::from_value(args.clone())
-            .wrap_err("invalid write_file tool input")?;
+        let input: WriteFileInput =
+            serde_json::from_value(args.clone()).wrap_err("invalid write_file tool input")?;
 
         // Resolve path
         let path = if PathBuf::from(&input.path).is_absolute() {

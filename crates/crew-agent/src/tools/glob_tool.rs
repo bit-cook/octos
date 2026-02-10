@@ -116,11 +116,7 @@ impl Tool for GlobTool {
             })
         } else {
             let count = result.len();
-            let output = format!(
-                "Found {} file(s):\n{}",
-                count,
-                result.join("\n")
-            );
+            let output = format!("Found {} file(s):\n{}", count, result.join("\n"));
             Ok(ToolResult {
                 output,
                 success: true,

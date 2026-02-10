@@ -23,6 +23,46 @@ pub struct Config {
     /// Environment variable name for API key (default: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY).
     #[serde(default)]
     pub api_key_env: Option<String>,
+
+    /// Gateway configuration (optional).
+    #[serde(default)]
+    pub gateway: Option<GatewayConfig>,
+}
+
+/// Gateway mode configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    /// Channels to enable.
+    #[serde(default)]
+    pub channels: Vec<ChannelEntry>,
+
+    /// Maximum conversation history messages to include.
+    #[serde(default = "default_max_history")]
+    pub max_history: usize,
+
+    /// Custom system prompt for gateway mode.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+/// A channel entry in gateway config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelEntry {
+    /// Channel type: "cli", "telegram", "discord".
+    #[serde(rename = "type")]
+    pub channel_type: String,
+
+    /// Allowed sender IDs (empty = allow all).
+    #[serde(default)]
+    pub allowed_senders: Vec<String>,
+
+    /// Channel-specific settings.
+    #[serde(default)]
+    pub settings: serde_json::Value,
+}
+
+fn default_max_history() -> usize {
+    50
 }
 
 impl Config {
@@ -166,6 +206,38 @@ mod tests {
         unsafe {
             std::env::remove_var("TEST_VAR");
         }
+    }
+
+    #[test]
+    fn test_gateway_config_deserialize() {
+        let json = r#"{
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-20250514",
+            "gateway": {
+                "channels": [{"type": "cli"}],
+                "max_history": 30
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let gw = config.gateway.unwrap();
+        assert_eq!(gw.channels.len(), 1);
+        assert_eq!(gw.channels[0].channel_type, "cli");
+        assert_eq!(gw.max_history, 30);
+        assert!(gw.system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_gateway_config_defaults() {
+        let json = r#"{"provider": "anthropic"}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.gateway.is_none());
+    }
+
+    #[test]
+    fn test_gateway_max_history_default() {
+        let json = r#"{"channels": [{"type": "cli"}]}"#;
+        let gw: GatewayConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(gw.max_history, 50);
     }
 
     #[test]

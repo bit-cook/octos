@@ -62,8 +62,8 @@ impl Tool for EditFileTool {
     }
 
     async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
-        let input: EditFileInput = serde_json::from_value(args.clone())
-            .wrap_err("invalid edit_file tool input")?;
+        let input: EditFileInput =
+            serde_json::from_value(args.clone()).wrap_err("invalid edit_file tool input")?;
 
         // Resolve path
         let path = if PathBuf::from(&input.path).is_absolute() {

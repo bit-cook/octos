@@ -18,4 +18,4 @@ pub mod openai;
 pub use config::ChatConfig;
 pub use provider::LlmProvider;
 pub use retry::{RetryConfig, RetryProvider};
-pub use types::{ChatResponse, StopReason, ToolSpec, TokenUsage};
+pub use types::{ChatResponse, StopReason, TokenUsage, ToolSpec};

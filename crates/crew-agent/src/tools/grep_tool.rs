@@ -163,10 +163,7 @@ impl Tool for GrepTool {
                     if regex.is_match(line) {
                         match_count += 1;
 
-                        let rel_path = path
-                            .strip_prefix(&base_dir)
-                            .unwrap_or(path)
-                            .display();
+                        let rel_path = path.strip_prefix(&base_dir).unwrap_or(path).display();
 
                         if context > 0 {
                             // Include context lines
@@ -186,12 +183,7 @@ impl Tool for GrepTool {
                             }
                             matches.push(ctx_output);
                         } else {
-                            matches.push(format!(
-                                "{}:{}: {}",
-                                rel_path,
-                                line_num + 1,
-                                line.trim()
-                            ));
+                            matches.push(format!("{}:{}: {}", rel_path, line_num + 1, line.trim()));
                         }
                     }
                 }

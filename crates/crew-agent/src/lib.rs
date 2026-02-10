@@ -12,7 +12,7 @@ pub mod policy;
 pub mod progress;
 pub mod tools;
 
-pub use agent::{Agent, AgentConfig};
+pub use agent::{Agent, AgentConfig, ConversationResponse};
 pub use progress::{ConsoleReporter, ProgressEvent, ProgressReporter, SilentReporter};
 pub use tools::{
     EditFileTool, GlobTool, GrepTool, ReadFileTool, ShellTool, Tool, ToolRegistry, ToolResult,
@@ -26,10 +26,16 @@ mod tests {
 
     fn setup_test_dir() -> TempDir {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("test.rs"), "fn main() {\n    println!(\"hello\");\n}\n")
-            .unwrap();
-        std::fs::write(dir.path().join("lib.rs"), "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("test.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n",
+        )
+        .unwrap();
         std::fs::create_dir(dir.path().join("src")).unwrap();
         std::fs::write(
             dir.path().join("src/module.rs"),

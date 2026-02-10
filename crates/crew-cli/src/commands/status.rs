@@ -33,17 +33,12 @@ impl Executable for StatusCommand {
 
 impl StatusCommand {
     async fn run_async(self) -> Result<()> {
-        let cwd = self
-            .cwd
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let cwd = self.cwd.unwrap_or_else(|| std::env::current_dir().unwrap());
 
         let data_dir = cwd.join(".crew");
         let task_store = TaskStore::open(&data_dir).await?;
 
-        let task_id: TaskId = self
-            .task_id
-            .parse()
-            .wrap_err("invalid task ID format")?;
+        let task_id: TaskId = self.task_id.parse().wrap_err("invalid task ID format")?;
 
         let state = task_store
             .load(&task_id)
@@ -61,9 +56,10 @@ impl StatusCommand {
         // Status
         let status_str = match &state.task.status {
             crew_core::TaskStatus::Pending => "Pending".yellow(),
-            crew_core::TaskStatus::InProgress { agent_id } => {
-                format!("In Progress ({})", agent_id).blue().to_string().into()
-            }
+            crew_core::TaskStatus::InProgress { agent_id } => format!("In Progress ({})", agent_id)
+                .blue()
+                .to_string()
+                .into(),
             crew_core::TaskStatus::Blocked { reason } => {
                 format!("Blocked: {}", reason).red().to_string().into()
             }

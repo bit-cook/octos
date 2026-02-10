@@ -2,6 +2,7 @@
 
 mod clean;
 mod completions;
+mod gateway;
 mod init;
 mod list;
 mod resume;
@@ -13,6 +14,7 @@ use eyre::Result;
 
 pub use clean::CleanCommand;
 pub use completions::CompletionsCommand;
+pub use gateway::GatewayCommand;
 pub use init::InitCommand;
 pub use list::ListCommand;
 pub use resume::ResumeCommand;
@@ -41,6 +43,8 @@ pub enum Command {
     List(ListCommand),
     /// Show details of a specific task.
     Status(StatusCommand),
+    /// Run as a persistent messaging gateway.
+    Gateway(GatewayCommand),
     /// Clean up stale task state and cache files.
     Clean(CleanCommand),
     /// Generate shell completions.
@@ -60,6 +64,7 @@ impl Executable for Command {
             Self::Resume(cmd) => cmd.execute(),
             Self::List(cmd) => cmd.execute(),
             Self::Status(cmd) => cmd.execute(),
+            Self::Gateway(cmd) => cmd.execute(),
             Self::Clean(cmd) => cmd.execute(),
             Self::Completions(cmd) => cmd.execute(),
         }

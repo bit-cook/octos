@@ -24,11 +24,7 @@ pub struct DelegateBatchTool {
 
 impl DelegateBatchTool {
     /// Create a new batch delegation tool.
-    pub fn new(
-        llm: Arc<dyn LlmProvider>,
-        memory: Arc<EpisodeStore>,
-        working_dir: PathBuf,
-    ) -> Self {
+    pub fn new(llm: Arc<dyn LlmProvider>, memory: Arc<EpisodeStore>, working_dir: PathBuf) -> Self {
         Self {
             llm,
             memory,
@@ -104,7 +100,10 @@ impl Tool for DelegateBatchTool {
         }
 
         let task_count = input.tasks.len();
-        tracing::info!(count = task_count, "delegating batch of subtasks in parallel");
+        tracing::info!(
+            count = task_count,
+            "delegating batch of subtasks in parallel"
+        );
 
         // Spawn all workers in parallel
         let mut handles = Vec::with_capacity(task_count);
@@ -119,20 +118,15 @@ impl Tool for DelegateBatchTool {
             let working_dir = self.working_dir.clone();
 
             let handle = tokio::spawn(async move {
-                let span = tracing::info_span!("worker", id = %worker_id, task = %subtask_input.task);
+                let span =
+                    tracing::info_span!("worker", id = %worker_id, task = %subtask_input.task);
                 let _guard = span.enter();
 
                 tracing::info!("starting parallel worker");
 
                 // Create worker agent
                 let tools = ToolRegistry::with_builtins(&working_dir);
-                let worker = Agent::new(
-                    worker_id.clone(),
-                    AgentRole::Worker,
-                    llm,
-                    tools,
-                    memory,
-                );
+                let worker = Agent::new(worker_id.clone(), AgentRole::Worker, llm, tools, memory);
 
                 // Create subtask
                 let files: Vec<PathBuf> = subtask_input.files.iter().map(PathBuf::from).collect();
@@ -170,7 +164,11 @@ impl Tool for DelegateBatchTool {
             match join_result {
                 Ok((worker_id, task_desc, result)) => match result {
                     Ok(task_result) => {
-                        let status = if task_result.success { "SUCCESS" } else { "FAILED" };
+                        let status = if task_result.success {
+                            "SUCCESS"
+                        } else {
+                            "FAILED"
+                        };
                         all_success = all_success && task_result.success;
                         total_input_tokens += task_result.token_usage.input_tokens;
                         total_output_tokens += task_result.token_usage.output_tokens;

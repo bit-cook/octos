@@ -1,0 +1,132 @@
+//! Message bus with typed handles for inbound/outbound routing.
+
+use crew_core::{InboundMessage, OutboundMessage};
+use tokio::sync::mpsc;
+
+const CHANNEL_SIZE: usize = 256;
+
+/// Handle given to the agent loop — receives inbound, sends outbound.
+pub struct AgentHandle {
+    in_rx: mpsc::Receiver<InboundMessage>,
+    out_tx: mpsc::Sender<OutboundMessage>,
+}
+
+impl AgentHandle {
+    pub async fn recv_inbound(&mut self) -> Option<InboundMessage> {
+        self.in_rx.recv().await
+    }
+
+    pub async fn send_outbound(
+        &self,
+        msg: OutboundMessage,
+    ) -> Result<(), mpsc::error::SendError<OutboundMessage>> {
+        self.out_tx.send(msg).await
+    }
+}
+
+/// Handle given to channels — sends inbound, receives outbound for dispatch.
+pub struct BusPublisher {
+    in_tx: mpsc::Sender<InboundMessage>,
+    out_rx: mpsc::Receiver<OutboundMessage>,
+}
+
+impl BusPublisher {
+    pub fn inbound_sender(&self) -> mpsc::Sender<InboundMessage> {
+        self.in_tx.clone()
+    }
+
+    pub async fn recv_outbound(&mut self) -> Option<OutboundMessage> {
+        self.out_rx.recv().await
+    }
+}
+
+/// Creates a linked pair of bus handles.
+pub fn create_bus() -> (AgentHandle, BusPublisher) {
+    let (in_tx, in_rx) = mpsc::channel(CHANNEL_SIZE);
+    let (out_tx, out_rx) = mpsc::channel(CHANNEL_SIZE);
+    (
+        AgentHandle { in_rx, out_tx },
+        BusPublisher { in_tx, out_rx },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn make_inbound(content: &str) -> InboundMessage {
+        InboundMessage {
+            channel: "test".into(),
+            sender_id: "user1".into(),
+            chat_id: "chat1".into(),
+            content: content.into(),
+            timestamp: Utc::now(),
+            media: vec![],
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    fn make_outbound(content: &str) -> OutboundMessage {
+        OutboundMessage {
+            channel: "test".into(),
+            chat_id: "chat1".into(),
+            content: content.into(),
+            reply_to: None,
+            media: vec![],
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_inbound() {
+        let (mut agent, publisher) = create_bus();
+        let tx = publisher.inbound_sender();
+        tx.send(make_inbound("hello")).await.unwrap();
+        let msg = agent.recv_inbound().await.unwrap();
+        assert_eq!(msg.content, "hello");
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_outbound() {
+        let (agent, mut publisher) = create_bus();
+        agent
+            .send_outbound(make_outbound("response"))
+            .await
+            .unwrap();
+        let msg = publisher.recv_outbound().await.unwrap();
+        assert_eq!(msg.content, "response");
+    }
+
+    #[tokio::test]
+    async fn test_dropped_sender_closes_receiver() {
+        let (mut agent, publisher) = create_bus();
+        drop(publisher);
+        assert!(agent.recv_inbound().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_multiple_inbound_messages() {
+        let (mut agent, publisher) = create_bus();
+        let tx = publisher.inbound_sender();
+        tx.send(make_inbound("one")).await.unwrap();
+        tx.send(make_inbound("two")).await.unwrap();
+        tx.send(make_inbound("three")).await.unwrap();
+        assert_eq!(agent.recv_inbound().await.unwrap().content, "one");
+        assert_eq!(agent.recv_inbound().await.unwrap().content, "two");
+        assert_eq!(agent.recv_inbound().await.unwrap().content, "three");
+    }
+
+    #[tokio::test]
+    async fn test_clone_inbound_sender() {
+        let (mut agent, publisher) = create_bus();
+        let tx1 = publisher.inbound_sender();
+        let tx2 = publisher.inbound_sender();
+        tx1.send(make_inbound("from-tx1")).await.unwrap();
+        tx2.send(make_inbound("from-tx2")).await.unwrap();
+        let m1 = agent.recv_inbound().await.unwrap();
+        let m2 = agent.recv_inbound().await.unwrap();
+        assert_eq!(m1.content, "from-tx1");
+        assert_eq!(m2.content, "from-tx2");
+    }
+}

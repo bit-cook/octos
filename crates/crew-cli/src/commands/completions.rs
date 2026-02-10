@@ -3,7 +3,7 @@
 use std::io;
 
 use clap::{Args, CommandFactory};
-use clap_complete::{generate, Shell};
+use clap_complete::{Shell, generate};
 use eyre::Result;
 
 use super::{Args as CliArgs, Executable};

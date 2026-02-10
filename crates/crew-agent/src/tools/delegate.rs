@@ -23,11 +23,7 @@ pub struct DelegateTaskTool {
 
 impl DelegateTaskTool {
     /// Create a new delegate task tool.
-    pub fn new(
-        llm: Arc<dyn LlmProvider>,
-        memory: Arc<EpisodeStore>,
-        working_dir: PathBuf,
-    ) -> Self {
+    pub fn new(llm: Arc<dyn LlmProvider>, memory: Arc<EpisodeStore>, working_dir: PathBuf) -> Self {
         Self {
             llm,
             memory,
@@ -75,8 +71,8 @@ impl Tool for DelegateTaskTool {
     }
 
     async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
-        let input: DelegateInput = serde_json::from_value(args.clone())
-            .wrap_err("invalid delegate_task input")?;
+        let input: DelegateInput =
+            serde_json::from_value(args.clone()).wrap_err("invalid delegate_task input")?;
 
         // Generate worker ID
         let worker_num = self

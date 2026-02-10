@@ -43,6 +43,10 @@ pub enum ErrorKind {
     UnknownProvider(String),
     /// Timeout.
     Timeout { operation: String, seconds: u64 },
+    /// Channel error (gateway).
+    ChannelError { channel: String, message: String },
+    /// Session error (gateway).
+    SessionError(String),
     /// IO error.
     IoError(std::io::Error),
     /// Serialization error.
@@ -153,6 +157,19 @@ impl Error {
             message: message.into(),
         })
     }
+
+    /// Channel error.
+    pub fn channel_error(channel: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::ChannelError {
+            channel: channel.into(),
+            message: message.into(),
+        })
+    }
+
+    /// Session error.
+    pub fn session_error(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::SessionError(message.into()))
+    }
 }
 
 impl fmt::Display for Error {
@@ -193,6 +210,10 @@ impl fmt::Display for Error {
             ErrorKind::Timeout { operation, seconds } => {
                 write!(f, "{} timed out after {}s", operation, seconds)?
             }
+            ErrorKind::ChannelError { channel, message } => {
+                write!(f, "Channel '{}' error: {}", channel, message)?
+            }
+            ErrorKind::SessionError(msg) => write!(f, "Session error: {}", msg)?,
             ErrorKind::IoError(e) => write!(f, "IO error: {}", e)?,
             ErrorKind::SerializationError(msg) => write!(f, "Serialization error: {}", msg)?,
             ErrorKind::Other(e) => write!(f, "{}", e)?,

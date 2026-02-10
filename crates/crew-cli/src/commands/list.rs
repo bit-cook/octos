@@ -29,9 +29,7 @@ impl Executable for ListCommand {
 
 impl ListCommand {
     async fn run_async(self) -> Result<()> {
-        let cwd = self
-            .cwd
-            .unwrap_or_else(|| std::env::current_dir().unwrap());
+        let cwd = self.cwd.unwrap_or_else(|| std::env::current_dir().unwrap());
 
         let data_dir = cwd.join(".crew");
         let task_store = TaskStore::open(&data_dir).await?;

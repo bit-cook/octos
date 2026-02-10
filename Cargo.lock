@@ -314,14 +314,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "crew-bus"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "crew-core",
+ "eyre",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "crew-cli"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "clap_complete",
  "color-eyre",
  "colored",
  "crew-agent",
+ "crew-bus",
  "crew-core",
  "crew-llm",
  "crew-memory",
