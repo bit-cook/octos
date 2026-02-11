@@ -62,6 +62,9 @@ glob = "0.3"
 regex = "1"
 ignore = "0.4"
 
+# Cron expressions
+cron = "0.15"
+
 # Time and IDs
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v7", "serde"] }

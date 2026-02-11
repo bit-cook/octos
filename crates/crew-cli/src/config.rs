@@ -5,9 +5,16 @@ use std::path::{Path, PathBuf};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
+/// Current config version.
+const CURRENT_CONFIG_VERSION: u32 = 1;
+
 /// LLM provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// Config version for migration.
+    #[serde(default)]
+    pub version: Option<u32>,
+
     /// LLM provider: "anthropic", "openai", or "gemini".
     #[serde(default)]
     pub provider: Option<String>,
@@ -89,11 +96,26 @@ impl Config {
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .wrap_err_with(|| format!("failed to read config file: {}", path.display()))?;
-        let mut config: Self = serde_json::from_str(&content)
+
+        // Parse as raw Value first for migration
+        let mut value: serde_json::Value = serde_json::from_str(&content)
             .wrap_err_with(|| format!("failed to parse config file: {}", path.display()))?;
+
+        let migrated = migrate_config(&mut value);
+
+        let mut config: Self = serde_json::from_value(value)
+            .wrap_err_with(|| format!("failed to deserialize config: {}", path.display()))?;
 
         // Expand environment variables in config values
         config.expand_env_vars();
+
+        // Write back if migration changed something
+        if migrated {
+            if let Ok(json) = serde_json::to_string_pretty(&config) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+
         Ok(config)
     }
 
@@ -190,6 +212,25 @@ impl Config {
 
         Ok(warnings)
     }
+}
+
+/// Migrate config to current version. Returns true if anything changed.
+fn migrate_config(value: &mut serde_json::Value) -> bool {
+    let current = value
+        .get("version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+
+    if current >= CURRENT_CONFIG_VERSION {
+        return false;
+    }
+
+    // Future migrations go here:
+    // if current < 2 { ... }
+
+    // Set version to current
+    value["version"] = serde_json::json!(CURRENT_CONFIG_VERSION);
+    true
 }
 
 /// Detect LLM provider from model name when no explicit provider is set.

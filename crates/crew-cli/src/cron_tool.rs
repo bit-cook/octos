@@ -28,6 +28,10 @@ struct Input {
     #[serde(default)]
     every_seconds: Option<i64>,
     #[serde(default)]
+    cron_expr: Option<String>,
+    #[serde(default)]
+    at_ms: Option<i64>,
+    #[serde(default)]
     channel: Option<String>,
     #[serde(default)]
     chat_id: Option<String>,
@@ -44,7 +48,7 @@ impl Tool for CronTool {
     }
 
     fn description(&self) -> &str {
-        "Schedule recurring or one-time tasks. Actions: add, list, remove."
+        "Schedule recurring or one-time tasks. Actions: add, list, remove, enable, disable."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -53,7 +57,7 @@ impl Tool for CronTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["add", "list", "remove"],
+                    "enum": ["add", "list", "remove", "enable", "disable"],
                     "description": "The action to perform"
                 },
                 "message": {
@@ -62,7 +66,15 @@ impl Tool for CronTool {
                 },
                 "every_seconds": {
                     "type": "integer",
-                    "description": "Interval in seconds for recurring jobs (required for 'add')"
+                    "description": "Interval in seconds for recurring jobs"
+                },
+                "cron_expr": {
+                    "type": "string",
+                    "description": "Cron expression for schedule (e.g. '0 0 9 * * * *' for daily at 9am)"
+                },
+                "at_ms": {
+                    "type": "integer",
+                    "description": "One-time run at this Unix timestamp in milliseconds"
                 },
                 "name": {
                     "type": "string",
@@ -93,8 +105,10 @@ impl Tool for CronTool {
             "add" => self.handle_add(input),
             "list" => Ok(self.handle_list()),
             "remove" => Ok(self.handle_remove(input)),
+            "enable" => Ok(self.handle_enable(input, true)),
+            "disable" => Ok(self.handle_enable(input, false)),
             other => Ok(ToolResult {
-                output: format!("Unknown action: {other}. Use 'add', 'list', or 'remove'."),
+                output: format!("Unknown action: {other}. Use 'add', 'list', 'remove', 'enable', or 'disable'."),
                 success: false,
                 ..Default::default()
             }),
@@ -115,20 +129,27 @@ impl CronTool {
             }
         };
 
-        let every_seconds = match input.every_seconds {
-            Some(s) if s > 0 => s,
-            _ => {
+        let (schedule, desc) = if let Some(s) = input.every_seconds {
+            if s <= 0 {
                 return Ok(ToolResult {
-                    output: "'every_seconds' must be a positive integer for 'add' action.".into(),
+                    output: "'every_seconds' must be a positive integer.".into(),
                     success: false,
                     ..Default::default()
                 });
             }
+            (CronSchedule::Every { every_ms: s * 1000 }, format!("every {s}s"))
+        } else if let Some(expr) = input.cron_expr {
+            (CronSchedule::Cron { expr: expr.clone() }, format!("cron: {expr}"))
+        } else if let Some(at) = input.at_ms {
+            (CronSchedule::At { at_ms: at }, format!("once at {at}"))
+        } else {
+            return Ok(ToolResult {
+                output: "One of 'every_seconds', 'cron_expr', or 'at_ms' is required for 'add'.".into(),
+                success: false,
+                ..Default::default()
+            });
         };
 
-        let schedule = CronSchedule::Every {
-            every_ms: every_seconds * 1000,
-        };
         let payload = CronPayload {
             message,
             deliver: input.channel.is_some(),
@@ -140,10 +161,7 @@ impl CronTool {
         let job = self.service.add_job(name, schedule, payload)?;
 
         Ok(ToolResult {
-            output: format!(
-                "Created job '{}' (id: {}), runs every {}s.",
-                job.name, job.id, every_seconds
-            ),
+            output: format!("Created job '{}' (id: {}), {desc}.", job.name, job.id),
             success: true,
             ..Default::default()
         })
@@ -164,6 +182,7 @@ impl CronTool {
             let schedule_desc = match &job.schedule {
                 CronSchedule::At { at_ms } => format!("once at {at_ms}"),
                 CronSchedule::Every { every_ms } => format!("every {}s", every_ms / 1000),
+                CronSchedule::Cron { expr } => format!("cron: {expr}"),
             };
             out.push_str(&format!(
                 "{}. [{}] {} — {} (msg: \"{}\")\n",
@@ -197,6 +216,34 @@ impl CronTool {
         if self.service.remove_job(&id) {
             ToolResult {
                 output: format!("Removed job {id}."),
+                success: true,
+                ..Default::default()
+            }
+        } else {
+            ToolResult {
+                output: format!("Job {id} not found."),
+                success: false,
+                ..Default::default()
+            }
+        }
+    }
+
+    fn handle_enable(&self, input: Input, enabled: bool) -> ToolResult {
+        let id = match input.job_id {
+            Some(id) => id,
+            None => {
+                return ToolResult {
+                    output: "'job_id' is required for enable/disable action.".into(),
+                    success: false,
+                    ..Default::default()
+                };
+            }
+        };
+
+        let action = if enabled { "Enabled" } else { "Disabled" };
+        if self.service.enable_job(&id, enabled) {
+            ToolResult {
+                output: format!("{action} job {id}."),
                 success: true,
                 ..Default::default()
             }

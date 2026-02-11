@@ -95,6 +95,7 @@ pub mod delegate_batch;
 pub mod edit_file;
 pub mod glob_tool;
 pub mod grep_tool;
+pub mod list_dir;
 pub mod read_file;
 pub mod shell;
 pub mod message;
@@ -108,6 +109,7 @@ pub use delegate_batch::DelegateBatchTool;
 pub use edit_file::EditFileTool;
 pub use glob_tool::GlobTool;
 pub use grep_tool::GrepTool;
+pub use list_dir::ListDirTool;
 pub use message::MessageTool;
 pub use read_file::ReadFileTool;
 pub use shell::ShellTool;
@@ -132,6 +134,7 @@ impl ToolRegistry {
         registry.register(WriteFileTool::new(cwd));
         registry.register(GlobTool::new(cwd));
         registry.register(GrepTool::new(cwd));
+        registry.register(ListDirTool::new(cwd));
         registry.register(WebSearchTool::new());
         registry.register(WebFetchTool::new());
         registry

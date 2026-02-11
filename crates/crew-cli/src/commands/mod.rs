@@ -1,8 +1,10 @@
 //! CLI commands for crew-rs.
 
+mod channels;
 mod chat;
 mod clean;
 mod completions;
+mod cron;
 mod gateway;
 mod init;
 mod list;
@@ -13,9 +15,11 @@ mod status;
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
+pub use channels::ChannelsCommand;
 pub use chat::ChatCommand;
 pub use clean::CleanCommand;
 pub use completions::CompletionsCommand;
+pub use cron::CronCommand;
 pub use gateway::GatewayCommand;
 pub use init::InitCommand;
 pub use list::ListCommand;
@@ -35,8 +39,12 @@ pub struct Args {
 /// Available commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Manage messaging channels.
+    Channels(ChannelsCommand),
     /// Interactive multi-turn chat with an agent.
     Chat(ChatCommand),
+    /// Manage scheduled cron jobs.
+    Cron(CronCommand),
     /// Initialize a new .crew configuration.
     Init(InitCommand),
     /// Run a task with an agent.
@@ -63,7 +71,9 @@ pub trait Executable {
 impl Executable for Command {
     fn execute(self) -> Result<()> {
         match self {
+            Self::Channels(cmd) => cmd.execute(),
             Self::Chat(cmd) => cmd.execute(),
+            Self::Cron(cmd) => cmd.execute(),
             Self::Init(cmd) => cmd.execute(),
             Self::Run(cmd) => cmd.execute(),
             Self::Resume(cmd) => cmd.execute(),

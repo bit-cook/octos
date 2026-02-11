@@ -10,6 +10,8 @@ pub enum CronSchedule {
     At { at_ms: i64 },
     /// Fire repeatedly at a fixed interval.
     Every { every_ms: i64 },
+    /// Fire on a cron expression schedule (e.g. "0 0 9 * * * *").
+    Cron { expr: String },
 }
 
 /// What a cron job delivers when it fires.
@@ -74,6 +76,15 @@ impl CronJob {
             CronSchedule::Every { every_ms } => {
                 let base = self.state.last_run_at_ms.unwrap_or(now_ms);
                 self.state.next_run_at_ms = Some(base + every_ms);
+            }
+            CronSchedule::Cron { expr } => {
+                use std::str::FromStr;
+                if let Ok(schedule) = cron::Schedule::from_str(expr) {
+                    let next = schedule.upcoming(chrono::Utc).next();
+                    self.state.next_run_at_ms = next.map(|t| t.timestamp_millis());
+                } else {
+                    self.state.next_run_at_ms = None;
+                }
             }
         }
     }
@@ -164,6 +175,32 @@ mod tests {
 
         job.enabled = false;
         assert!(!job.is_due(11_000));
+    }
+
+    #[test]
+    fn test_compute_next_run_cron() {
+        let mut job = CronJob {
+            id: "j3".into(),
+            name: "daily".into(),
+            enabled: true,
+            schedule: CronSchedule::Cron {
+                expr: "0 0 9 * * * *".into(),
+            },
+            payload: CronPayload {
+                message: "morning".into(),
+                deliver: false,
+                channel: None,
+                chat_id: None,
+            },
+            state: CronJobState::default(),
+            created_at_ms: 1000,
+            delete_after_run: false,
+        };
+        job.compute_next_run(0);
+        assert!(job.state.next_run_at_ms.is_some());
+        // Next run should be in the future
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        assert!(job.state.next_run_at_ms.unwrap() > now_ms - 1000);
     }
 
     #[test]

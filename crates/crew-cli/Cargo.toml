@@ -26,6 +26,7 @@ colored = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 eyre = { workspace = true }
+uuid = { workspace = true }
 color-eyre = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -8,6 +8,7 @@
 //! - Integration with codex sandboxing (when enabled)
 
 mod agent;
+pub mod builtin_skills;
 pub mod policy;
 pub mod progress;
 pub mod skills;
@@ -17,8 +18,8 @@ pub use agent::{Agent, AgentConfig, ConversationResponse};
 pub use progress::{ConsoleReporter, ProgressEvent, ProgressReporter, SilentReporter};
 pub use skills::{SkillInfo, SkillsLoader};
 pub use tools::{
-    EditFileTool, GlobTool, GrepTool, MessageTool, ReadFileTool, ShellTool, SpawnTool, Tool,
-    ToolRegistry, ToolResult, WebFetchTool, WebSearchTool, WriteFileTool,
+    EditFileTool, GlobTool, GrepTool, ListDirTool, MessageTool, ReadFileTool, ShellTool, SpawnTool,
+    Tool, ToolRegistry, ToolResult, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 
 #[cfg(test)]
@@ -167,6 +168,7 @@ mod tests {
         assert!(names.contains(&"edit_file"));
         assert!(names.contains(&"glob"));
         assert!(names.contains(&"grep"));
+        assert!(names.contains(&"list_dir"));
         assert!(names.contains(&"web_search"));
         assert!(names.contains(&"web_fetch"));
     }

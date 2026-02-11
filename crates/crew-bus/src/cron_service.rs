@@ -129,6 +129,41 @@ impl CronService {
         jobs
     }
 
+    /// List all jobs (including disabled), sorted by next run time.
+    pub fn list_all_jobs(&self) -> Vec<CronJob> {
+        let store = self.store.lock().unwrap();
+        let mut jobs: Vec<_> = store.jobs.clone();
+        jobs.sort_by_key(|j| j.state.next_run_at_ms.unwrap_or(i64::MAX));
+        jobs
+    }
+
+    /// Enable or disable a cron job. Returns true if found.
+    pub fn enable_job(self: &std::sync::Arc<Self>, id: &str, enabled: bool) -> bool {
+        let found = {
+            let now_ms = Utc::now().timestamp_millis();
+            let mut store = self.store.lock().unwrap();
+            if let Some(job) = store.jobs.iter_mut().find(|j| j.id == id) {
+                job.enabled = enabled;
+                if enabled {
+                    job.compute_next_run(now_ms);
+                } else {
+                    job.state.next_run_at_ms = None;
+                }
+                true
+            } else {
+                false
+            }
+        };
+
+        if found {
+            let _ = self.save_store();
+            self.arm_timer();
+            debug!(id = %id, enabled = %enabled, "toggled cron job");
+        }
+
+        found
+    }
+
     /// Arm a timer for the earliest due job.
     fn arm_timer(self: &std::sync::Arc<Self>) {
         if !self.running.load(Ordering::Relaxed) {
