@@ -48,6 +48,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 colored = "2"
 dirs = "5"
+rustyline = "15"
 
 # HTTP client (using rustls for pure Rust, no OpenSSL)
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }

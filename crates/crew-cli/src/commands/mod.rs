@@ -1,5 +1,6 @@
 //! CLI commands for crew-rs.
 
+mod chat;
 mod clean;
 mod completions;
 mod gateway;
@@ -12,6 +13,7 @@ mod status;
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
+pub use chat::ChatCommand;
 pub use clean::CleanCommand;
 pub use completions::CompletionsCommand;
 pub use gateway::GatewayCommand;
@@ -33,6 +35,8 @@ pub struct Args {
 /// Available commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Interactive multi-turn chat with an agent.
+    Chat(ChatCommand),
     /// Initialize a new .crew configuration.
     Init(InitCommand),
     /// Run a task with an agent.
@@ -59,6 +63,7 @@ pub trait Executable {
 impl Executable for Command {
     fn execute(self) -> Result<()> {
         match self {
+            Self::Chat(cmd) => cmd.execute(),
             Self::Init(cmd) => cmd.execute(),
             Self::Run(cmd) => cmd.execute(),
             Self::Resume(cmd) => cmd.execute(),

@@ -188,15 +188,50 @@ impl Executable for InitCommand {
         if !gitignore_path.exists() {
             std::fs::write(
                 &gitignore_path,
-                "# Ignore task state and database files\ntasks/\n*.redb\n",
+                "# Ignore task state and database files\ntasks/\nsessions/\n*.redb\n",
             )?;
             println!("{} {}", "Created:".green(), gitignore_path.display());
+        }
+
+        // Create bootstrap template files (skip existing)
+        let templates: &[(&str, &str)] = &[
+            (
+                "AGENTS.md",
+                "# Agent Instructions\n\nCustomize agent behavior and guidelines here.\n",
+            ),
+            (
+                "SOUL.md",
+                "# Personality\n\nDefine the agent's personality and values.\n",
+            ),
+            (
+                "USER.md",
+                "# User Info\n\nAdd your information and preferences here.\n",
+            ),
+        ];
+
+        for (name, content) in templates {
+            let path = config_dir.join(name);
+            if !path.exists() {
+                std::fs::write(&path, content)?;
+                println!("{} {}", "Created:".green(), path.display());
+            }
+        }
+
+        // Create subdirectories
+        for dir in &["memory", "sessions", "skills"] {
+            let path = config_dir.join(dir);
+            if !path.exists() {
+                std::fs::create_dir_all(&path)?;
+                println!("{} {}/", "Created:".green(), path.display());
+            }
         }
 
         println!();
         println!(
             "{}",
-            "Ready! Run 'crew run <goal>' to start.".green().bold()
+            "Ready! Run 'crew run <goal>' or 'crew chat' to start."
+                .green()
+                .bold()
         );
 
         Ok(())

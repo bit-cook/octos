@@ -10,7 +10,7 @@ use crew_agent::{Agent, AgentConfig, ConsoleReporter, ToolRegistry};
 use crew_core::{AgentId, AgentRole, Task, TaskContext, TaskKind};
 use crew_llm::{
     LlmProvider, RetryProvider, anthropic::AnthropicProvider, gemini::GeminiProvider,
-    openai::OpenAIProvider,
+    openai::OpenAIProvider, openrouter::OpenRouterProvider,
 };
 use crew_memory::{EpisodeStore, TaskStore};
 use eyre::{Result, WrapErr};
@@ -94,12 +94,18 @@ impl RunCommand {
         };
 
         // Merge CLI args with config (CLI takes precedence)
+        let model = self.model.or(config.model.clone());
+        let base_url = self.base_url.or(config.base_url.clone());
         let provider = self
             .provider
             .or(config.provider.clone())
+            .or_else(|| {
+                model
+                    .as_deref()
+                    .and_then(crate::config::detect_provider)
+                    .map(String::from)
+            })
             .unwrap_or_else(|| "anthropic".to_string());
-        let model = self.model.or(config.model.clone());
-        let base_url = self.base_url.or(config.base_url.clone());
 
         println!("{}: {}", "Goal".green(), self.goal);
         println!("{}: {}", "Working dir".green(), cwd.display());
@@ -140,10 +146,102 @@ impl RunCommand {
                 println!("{}: {}", "Model".green(), provider.model_id());
                 Arc::new(provider)
             }
+            "openrouter" => {
+                let api_key = config.get_api_key("openrouter")?;
+                let model_name =
+                    model.unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".to_string());
+                let mut p = OpenRouterProvider::new(&api_key, &model_name);
+                if let Some(url) = &base_url {
+                    p = p.with_base_url(url);
+                }
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "deepseek" => {
+                let api_key = config.get_api_key("deepseek")?;
+                let model_name = model.unwrap_or_else(|| "deepseek-chat".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url.as_deref().unwrap_or("https://api.deepseek.com/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "groq" => {
+                let api_key = config.get_api_key("groq")?;
+                let model_name =
+                    model.unwrap_or_else(|| "llama-3.3-70b-versatile".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url.as_deref().unwrap_or("https://api.groq.com/openai/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "moonshot" | "kimi" => {
+                let api_key = config.get_api_key("moonshot")?;
+                let model_name = model.unwrap_or_else(|| "kimi-k2.5".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url.as_deref().unwrap_or("https://api.moonshot.ai/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "dashscope" | "qwen" => {
+                let api_key = config.get_api_key("dashscope")?;
+                let model_name = model.unwrap_or_else(|| "qwen-max".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url
+                        .as_deref()
+                        .unwrap_or("https://dashscope.aliyuncs.com/compatible-mode/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "minimax" => {
+                let api_key = config.get_api_key("minimax")?;
+                let model_name = model.unwrap_or_else(|| "MiniMax-Text-01".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url.as_deref().unwrap_or("https://api.minimax.io/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "zhipu" | "glm" => {
+                let api_key = config.get_api_key("zhipu")?;
+                let model_name = model.unwrap_or_else(|| "glm-4-plus".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url
+                        .as_deref()
+                        .unwrap_or("https://open.bigmodel.cn/api/paas/v4"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "ollama" => {
+                let model_name = model.unwrap_or_else(|| "llama3.2".to_string());
+                let p = OpenAIProvider::new("ollama", &model_name).with_base_url(
+                    base_url.as_deref().unwrap_or("http://localhost:11434/v1"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
+            "vllm" => {
+                let api_key = config
+                    .get_api_key("vllm")
+                    .unwrap_or_else(|_| "token".to_string());
+                let model_name = model.ok_or_else(|| {
+                    eyre::eyre!("vllm provider requires --model to be specified")
+                })?;
+                let url = base_url.ok_or_else(|| {
+                    eyre::eyre!("vllm provider requires --base-url to be specified")
+                })?;
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(&url);
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
             other => {
                 eyre::bail!(
-                    "unknown provider: {}. Use 'anthropic', 'openai', or 'gemini'",
-                    other
+                    "unknown provider: {other}. Valid: anthropic, openai, gemini, openrouter, \
+                     deepseek, groq, moonshot, dashscope, minimax, zhipu, ollama, vllm"
                 );
             }
         };

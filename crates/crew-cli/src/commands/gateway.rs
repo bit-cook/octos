@@ -218,10 +218,21 @@ impl GatewayCommand {
                 println!("{}: {}", "Model".green(), p.model_id());
                 Arc::new(p)
             }
+            "zhipu" | "glm" => {
+                let api_key = config.get_api_key("zhipu")?;
+                let model_name = model.unwrap_or_else(|| "glm-4-plus".to_string());
+                let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                    base_url
+                        .as_deref()
+                        .unwrap_or("https://open.bigmodel.cn/api/paas/v4"),
+                );
+                println!("{}: {}", "Model".green(), p.model_id());
+                Arc::new(p)
+            }
             other => {
                 eyre::bail!(
                     "unknown provider: {other}. Valid: anthropic, openai, gemini, openrouter, \
-                     deepseek, groq, moonshot, dashscope, minimax, ollama, vllm"
+                     deepseek, groq, moonshot, dashscope, minimax, zhipu, ollama, vllm"
                 );
             }
         };

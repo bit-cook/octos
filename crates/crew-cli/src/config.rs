@@ -145,6 +145,7 @@ impl Config {
             "anthropic" => "ANTHROPIC_API_KEY".to_string(),
             "openai" => "OPENAI_API_KEY".to_string(),
             "gemini" => "GEMINI_API_KEY".to_string(),
+            "zhipu" | "glm" => "ZHIPU_API_KEY".to_string(),
             _ => format!("{}_API_KEY", provider.to_uppercase()),
         });
 
@@ -162,7 +163,8 @@ impl Config {
             const VALID: &[&str] = &[
                 "anthropic", "openai", "gemini", "openrouter",
                 "deepseek", "groq", "moonshot", "kimi",
-                "dashscope", "qwen", "minimax", "ollama", "vllm",
+                "dashscope", "qwen", "minimax", "zhipu", "glm",
+                "ollama", "vllm",
             ];
             if !VALID.contains(&provider.as_str()) {
                 warnings.push(format!(
@@ -180,6 +182,7 @@ impl Config {
                 "anthropic" => "ANTHROPIC_API_KEY".to_string(),
                 "openai" => "OPENAI_API_KEY".to_string(),
                 "gemini" => "GEMINI_API_KEY".to_string(),
+                "zhipu" | "glm" => "ZHIPU_API_KEY".to_string(),
                 _ => format!("{}_API_KEY", provider.to_uppercase()),
             });
             warnings.push(format!("{} environment variable not set", env_var));
@@ -209,6 +212,9 @@ pub fn detect_provider(model: &str) -> Option<&'static str> {
     }
     if m.contains("qwen") {
         return Some("dashscope");
+    }
+    if m.contains("glm") {
+        return Some("zhipu");
     }
     if m.contains("minimax") {
         return Some("minimax");
@@ -296,6 +302,7 @@ mod tests {
         assert_eq!(detect_provider("deepseek-chat"), Some("deepseek"));
         assert_eq!(detect_provider("kimi-k2.5"), Some("moonshot"));
         assert_eq!(detect_provider("qwen-max"), Some("dashscope"));
+        assert_eq!(detect_provider("glm-4-plus"), Some("zhipu"));
         assert_eq!(detect_provider("llama-3.3-70b"), Some("groq"));
     }
 
