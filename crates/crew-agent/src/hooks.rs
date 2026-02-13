@@ -131,14 +131,21 @@ impl HookExecutor {
             // Circuit breaker: skip if too many failures
             let fail_count = self.failures[i].load(Ordering::Relaxed);
             if fail_count >= self.failure_threshold {
-                if fail_count == self.failure_threshold {
+                // Atomically claim the warning (threshold -> threshold+1) so it fires once
+                if self.failures[i]
+                    .compare_exchange(
+                        self.failure_threshold,
+                        self.failure_threshold + 1,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
                     warn!(
                         hook_command = ?hook.command,
                         "hook disabled after {} consecutive failures",
                         self.failure_threshold
                     );
-                    // Increment past threshold so warning only fires once
-                    self.failures[i].store(self.failure_threshold + 1, Ordering::Relaxed);
                 }
                 continue;
             }
@@ -148,10 +155,18 @@ impl HookExecutor {
                     self.failures[i].store(0, Ordering::Relaxed);
                 }
                 Ok((1, stdout)) => {
-                    self.failures[i].store(0, Ordering::Relaxed);
                     if matches!(event, HookEvent::BeforeToolCall | HookEvent::BeforeLlmCall) {
+                        self.failures[i].store(0, Ordering::Relaxed);
                         return HookResult::Deny(stdout);
                     }
+                    // Exit 1 on after-hooks is an error (deny is meaningless for after-events)
+                    let new_count = self.failures[i].fetch_add(1, Ordering::Relaxed) + 1;
+                    let msg = format!(
+                        "hook {:?} exited with code 1 on after-event ({}/{})",
+                        hook.command, new_count, self.failure_threshold
+                    );
+                    warn!("{}", msg);
+                    last_error = Some(msg);
                 }
                 Ok((code, _stdout)) => {
                     let new_count = self.failures[i].fetch_add(1, Ordering::Relaxed) + 1;

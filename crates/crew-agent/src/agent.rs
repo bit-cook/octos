@@ -756,9 +756,9 @@ impl Agent {
                         hooks.run(HookEvent::BeforeToolCall, &payload).await
                     {
                         let deny_msg = if reason.is_empty() {
-                            format!("Tool '{}' denied by hook", tool_call.name)
+                            format!("[HOOK DENIED] Tool '{}' was blocked by a lifecycle hook. Do not retry.", tool_call.name)
                         } else {
-                            format!("Tool '{}' denied by hook: {}", tool_call.name, reason)
+                            format!("[HOOK DENIED] Tool '{}' was blocked: {}. Do not retry.", tool_call.name, reason)
                         };
                         return (
                             Message {
@@ -782,7 +782,7 @@ impl Agent {
 
                 let duration = tool_start.elapsed();
 
-                let (content, file_modified, tool_tokens) = match result {
+                let (content, file_modified, tool_tokens, tool_success) = match result {
                     Ok(tool_result) => {
                         debug!(
                             tool = %tool_call.name,
@@ -812,10 +812,12 @@ impl Agent {
                             duration,
                         });
 
+                        let success = tool_result.success;
                         (
                             tool_result.output,
                             tool_result.file_modified,
                             tool_result.tokens_used,
+                            success,
                         )
                     }
                     Err(e) => {
@@ -834,7 +836,7 @@ impl Agent {
                             duration,
                         });
 
-                        (format!("Error: {e}"), None, None)
+                        (format!("Error: {e}"), None, None, false)
                     }
                 };
 
@@ -854,7 +856,7 @@ impl Agent {
                         } else {
                             content.clone()
                         }),
-                        success: Some(!content.starts_with("Error: ")),
+                        success: Some(tool_success),
                         duration_ms: Some(duration.as_millis() as u64),
                         message_count: None,
                         model: None,
