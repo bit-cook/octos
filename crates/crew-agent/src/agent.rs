@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crew_core::{AgentId, Message, MessageRole, Task, TaskResult, TokenUsage};
-use crew_llm::{ChatConfig, ChatResponse, ChatStream, LlmProvider, StopReason, StreamEvent};
+use crew_llm::{
+    ChatConfig, ChatResponse, ChatStream, EmbeddingProvider, LlmProvider, StopReason, StreamEvent,
+};
 use futures::StreamExt;
 use crew_memory::{Episode, EpisodeOutcome, EpisodeStore};
 use eyre::Result;
@@ -55,6 +57,8 @@ pub struct Agent {
     tools: ToolRegistry,
     /// Episode store for memory.
     memory: Arc<EpisodeStore>,
+    /// Embedding provider for hybrid memory search.
+    embedder: Option<Arc<dyn EmbeddingProvider>>,
     /// System prompt for this agent (RwLock for hot-reload support).
     system_prompt: RwLock<String>,
     /// Agent configuration.
@@ -80,6 +84,7 @@ impl Agent {
             llm,
             tools,
             memory,
+            embedder: None,
             system_prompt: RwLock::new(system_prompt),
             config: AgentConfig::default(),
             reporter: Arc::new(SilentReporter),
@@ -102,6 +107,12 @@ impl Agent {
     /// Set the shutdown signal.
     pub fn with_shutdown(mut self, shutdown: Arc<AtomicBool>) -> Self {
         self.shutdown = shutdown;
+        self
+    }
+
+    /// Set the embedding provider for hybrid memory search.
+    pub fn with_embedder(mut self, embedder: Arc<dyn EmbeddingProvider>) -> Self {
+        self.embedder = Some(embedder);
         self
     }
 
@@ -331,13 +342,33 @@ impl Agent {
                                 task.id.clone(),
                                 self.id.clone(),
                                 task.context.working_dir.clone(),
-                                summary_truncated,
+                                summary_truncated.clone(),
                                 EpisodeOutcome::Success,
                             );
                             episode.files_modified = files_modified.clone();
+                            let ep_id = episode.id.clone();
 
                             if let Err(e) = self.memory.store(episode).await {
                                 warn!(error = %e, "failed to save episode to memory");
+                            }
+
+                            // Fire-and-forget: embed summary and store embedding
+                            if let Some(ref embedder) = self.embedder {
+                                let embedder = embedder.clone();
+                                let memory = self.memory.clone();
+                                let summary_text = summary_truncated;
+                                let episode_id = ep_id;
+                                tokio::spawn(async move {
+                                    if let Ok(vecs) = embedder.embed(&[&summary_text]).await {
+                                        if let Some(vec) = vecs.into_iter().next() {
+                                            if let Err(e) =
+                                                memory.store_embedding(&episode_id, vec).await
+                                            {
+                                                warn!(error = %e, "failed to store embedding");
+                                            }
+                                        }
+                                    }
+                                });
                             }
                         }
 
@@ -407,11 +438,28 @@ impl Agent {
             crew_core::TaskKind::Custom { name, .. } => name.clone(),
         };
 
-        if let Ok(episodes) = self
-            .memory
-            .find_relevant(&task.context.working_dir, &query, 3)
-            .await
-        {
+        let episodes_result = if let Some(ref embedder) = self.embedder {
+            match embedder.embed(&[query.as_str()]).await {
+                Ok(vecs) => {
+                    let query_emb = vecs.into_iter().next();
+                    self.memory
+                        .find_relevant_hybrid(&query, query_emb, 6)
+                        .await
+                }
+                Err(e) => {
+                    warn!(error = %e, "embedding failed, falling back to keyword search");
+                    self.memory
+                        .find_relevant_hybrid(&query, None, 6)
+                        .await
+                }
+            }
+        } else {
+            self.memory
+                .find_relevant(&task.context.working_dir, &query, 3)
+                .await
+        };
+
+        if let Ok(episodes) = episodes_result {
             if !episodes.is_empty() {
                 let mut context_str = String::from("## Relevant Past Experiences\n\n");
                 for ep in &episodes {

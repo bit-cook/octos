@@ -46,6 +46,30 @@ pub struct Config {
     /// Tool access policy (allow/deny lists with group and wildcard support).
     #[serde(default)]
     pub tool_policy: Option<crew_agent::ToolPolicy>,
+
+    /// Embedding configuration for hybrid memory search.
+    #[serde(default)]
+    pub embedding: Option<EmbeddingConfig>,
+}
+
+/// Embedding provider configuration.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EmbeddingConfig {
+    /// Provider name (currently only "openai").
+    #[serde(default = "default_embedding_provider")]
+    pub provider: String,
+
+    /// Environment variable name for the API key (overrides provider default).
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
+    /// Custom base URL for the embedding API.
+    #[serde(default)]
+    pub base_url: Option<String>,
+}
+
+fn default_embedding_provider() -> String {
+    "openai".to_string()
 }
 
 impl Config {
@@ -499,6 +523,29 @@ mod tests {
         };
         let warnings = config.validate().unwrap();
         assert!(warnings.iter().any(|w| w.contains("Unknown channel type")));
+    }
+
+    #[test]
+    fn test_embedding_config_deserialize() {
+        let json = r#"{
+            "provider": "anthropic",
+            "embedding": {
+                "provider": "openai",
+                "base_url": "https://custom.api.com/v1"
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let emb = config.embedding.unwrap();
+        assert_eq!(emb.provider, "openai");
+        assert_eq!(emb.base_url.unwrap(), "https://custom.api.com/v1");
+        assert!(emb.api_key_env.is_none());
+    }
+
+    #[test]
+    fn test_embedding_config_absent() {
+        let json = r#"{"provider": "anthropic"}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.embedding.is_none());
     }
 
     #[test]

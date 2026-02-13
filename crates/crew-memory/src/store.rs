@@ -1,13 +1,14 @@
 //! Episode store: persistent storage for episodes using redb (pure Rust).
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use eyre::{Result, WrapErr};
 use redb::{Database, ReadableTable, TableDefinition};
 use tracing::debug;
 
 use crate::episode::Episode;
+use crate::hybrid_search::HybridIndex;
 
 /// Table for episodes: key = episode_id, value = JSON
 const EPISODES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("episodes");
@@ -15,9 +16,16 @@ const EPISODES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("episod
 /// Index table for episodes by working directory: key = cwd, value = list of episode IDs (JSON)
 const CWD_INDEX_TABLE: TableDefinition<&str, &str> = TableDefinition::new("cwd_index");
 
+/// Table for episode embeddings: key = episode_id, value = bincode-serialized Vec<f32>
+const EMBEDDINGS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("embeddings");
+
+/// Default embedding dimension (OpenAI text-embedding-3-small).
+const DEFAULT_DIMENSION: usize = 1536;
+
 /// Store for episodes using redb (pure Rust embedded database).
 pub struct EpisodeStore {
     db: Arc<Database>,
+    index: RwLock<HybridIndex>,
 }
 
 impl EpisodeStore {
@@ -39,21 +47,51 @@ impl EpisodeStore {
         // Initialize tables
         let write_txn = db.begin_write()?;
         {
-            // Create tables if they don't exist
             let _ = write_txn.open_table(EPISODES_TABLE)?;
             let _ = write_txn.open_table(CWD_INDEX_TABLE)?;
+            let _ = write_txn.open_table(EMBEDDINGS_TABLE)?;
         }
         write_txn.commit()?;
 
+        // Rebuild in-memory hybrid index from stored data
+        let mut index = HybridIndex::new(DEFAULT_DIMENSION);
+        {
+            let read_txn = db.begin_read()?;
+            let episodes_table = read_txn.open_table(EPISODES_TABLE)?;
+            let embeddings_table = read_txn.open_table(EMBEDDINGS_TABLE)?;
+
+            for entry in episodes_table.iter()? {
+                let (key, value) = entry?;
+                let ep_id = key.value().to_string();
+                if let Ok(episode) = serde_json::from_str::<Episode>(value.value()) {
+                    let embedding: Option<Vec<f32>> = embeddings_table
+                        .get(ep_id.as_str())
+                        .ok()
+                        .flatten()
+                        .and_then(|v| bincode::deserialize(v.value()).ok());
+                    index.insert(
+                        &ep_id,
+                        &episode.summary,
+                        embedding.as_deref(),
+                    );
+                }
+            }
+        }
+
         debug!(path = %data_dir.display(), "opened episode store");
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            index: RwLock::new(index),
+        })
     }
 
     /// Store an episode.
     pub async fn store(&self, episode: Episode) -> Result<()> {
         let db = self.db.clone();
         let episode_id = episode.id.clone();
+        let episode_id_for_index = episode_id.clone();
+        let summary = episode.summary.clone();
         let cwd = episode.working_dir.to_string_lossy().to_string();
         let episode_json =
             serde_json::to_string(&episode).wrap_err("failed to serialize episode")?;
@@ -83,6 +121,11 @@ impl EpisodeStore {
             Ok::<_, eyre::Report>(())
         })
         .await??;
+
+        // Update in-memory hybrid index (text only, no embedding yet)
+        if let Ok(mut idx) = self.index.write() {
+            idx.insert(&episode_id_for_index, &summary, None);
+        }
 
         Ok(())
     }
@@ -190,6 +233,82 @@ impl EpisodeStore {
             } else {
                 Ok(None)
             }
+        })
+        .await?
+    }
+
+    /// Store an embedding for an episode.
+    pub async fn store_embedding(&self, episode_id: &str, embedding: Vec<f32>) -> Result<()> {
+        let db = self.db.clone();
+        let ep_id = episode_id.to_string();
+        let emb_bytes =
+            bincode::serialize(&embedding).wrap_err("failed to serialize embedding")?;
+
+        tokio::task::spawn_blocking(move || {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(EMBEDDINGS_TABLE)?;
+                table.insert(ep_id.as_str(), emb_bytes.as_slice())?;
+            }
+            write_txn.commit()?;
+            Ok::<_, eyre::Report>(())
+        })
+        .await??;
+
+        // Update in-memory index: re-insert with embedding.
+        // We need the summary text too, so read it from the index's stored data.
+        // For simplicity, fetch from DB.
+        if let Ok(Some(episode)) = self.get(episode_id).await {
+            if let Ok(mut idx) = self.index.write() {
+                idx.insert(episode_id, &episode.summary, Some(&embedding));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Hybrid search across all episodes (not cwd-scoped).
+    pub async fn find_relevant_hybrid(
+        &self,
+        query: &str,
+        query_embedding: Option<Vec<f32>>,
+        limit: usize,
+    ) -> Result<Vec<Episode>> {
+        // Search the in-memory index
+        let matches = {
+            let idx = self
+                .index
+                .read()
+                .map_err(|e| eyre::eyre!("index lock poisoned: {e}"))?;
+            idx.search(query, query_embedding.as_deref(), limit)
+        };
+
+        // Fetch full episodes from DB
+        let db = self.db.clone();
+        let ids: Vec<String> = matches.into_iter().map(|(id, _)| id).collect();
+
+        tokio::task::spawn_blocking(move || {
+            let read_txn = db.begin_read()?;
+            let table = read_txn.open_table(EPISODES_TABLE)?;
+
+            let mut episodes = Vec::new();
+            for id in &ids {
+                if let Some(json) = table.get(id.as_str())? {
+                    if let Ok(episode) = serde_json::from_str::<Episode>(json.value()) {
+                        episodes.push(episode);
+                    }
+                }
+            }
+
+            // Preserve the ranking order from hybrid search
+            let id_order: std::collections::HashMap<&str, usize> = ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.as_str(), i))
+                .collect();
+            episodes.sort_by_key(|e| id_order.get(e.id.as_str()).copied().unwrap_or(usize::MAX));
+
+            Ok(episodes)
         })
         .await?
     }

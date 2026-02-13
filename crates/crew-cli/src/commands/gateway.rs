@@ -21,6 +21,7 @@ use tracing::{info, warn};
 use std::path::Path;
 
 use super::Executable;
+use crate::commands::chat::create_embedder;
 use crate::config::{Config, detect_provider};
 use crate::config_watcher::{ConfigChange, ConfigWatcher};
 use crate::cron_tool::CronTool;
@@ -354,7 +355,7 @@ impl GatewayCommand {
         let shutdown_clone = shutdown.clone();
 
         let llm_for_compaction = llm.clone();
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             AgentId::new("gateway"),
             llm,
             tools,
@@ -364,6 +365,10 @@ impl GatewayCommand {
         .with_reporter(Arc::new(SilentReporter))
         .with_shutdown(shutdown.clone())
         .with_system_prompt(system_prompt);
+
+        if let Some(embedder) = create_embedder(&config) {
+            agent = agent.with_embedder(embedder);
+        }
 
         // Start config watcher for hot-reload
         let watch_paths = {

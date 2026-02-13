@@ -9,8 +9,8 @@ use colored::Colorize;
 use crew_agent::{Agent, AgentConfig, ConsoleReporter, ToolRegistry};
 use crew_core::{AgentId, Message, MessageRole};
 use crew_llm::{
-    LlmProvider, RetryProvider, anthropic::AnthropicProvider, gemini::GeminiProvider,
-    openai::OpenAIProvider, openrouter::OpenRouterProvider,
+    EmbeddingProvider, LlmProvider, OpenAIEmbedder, RetryProvider, anthropic::AnthropicProvider,
+    gemini::GeminiProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
 };
 use crew_memory::EpisodeStore;
 use eyre::{Result, WrapErr};
@@ -155,7 +155,7 @@ impl ChatCommand {
             max_tokens: None,
             save_episodes: false,
         };
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             AgentId::new("chat"),
             llm,
             tools,
@@ -164,6 +164,10 @@ impl ChatCommand {
         .with_config(agent_config)
         .with_reporter(reporter)
         .with_shutdown(shutdown.clone());
+
+        if let Some(embedder) = create_embedder(&config) {
+            agent = agent.with_embedder(embedder);
+        }
 
         // Single-message mode: send one message and exit
         if let Some(msg) = self.message {
@@ -256,6 +260,17 @@ impl ChatCommand {
 
         Ok(())
     }
+}
+
+/// Create an embedding provider from config, if configured.
+pub(crate) fn create_embedder(config: &Config) -> Option<Arc<dyn EmbeddingProvider>> {
+    let cfg = config.embedding.as_ref()?;
+    let key = config.get_api_key(&cfg.provider).ok()?;
+    let mut e = OpenAIEmbedder::new(key);
+    if let Some(ref url) = cfg.base_url {
+        e = e.with_base_url(url);
+    }
+    Some(Arc::new(e))
 }
 
 /// Create an LLM provider from name and config.

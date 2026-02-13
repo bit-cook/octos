@@ -17,6 +17,8 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 eyre = { workspace = true }
 tracing = { workspace = true }
+hnsw_rs = { workspace = true }
+bincode = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
