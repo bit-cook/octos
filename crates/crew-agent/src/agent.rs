@@ -107,13 +107,13 @@ impl Agent {
 
     /// Override the system prompt (e.g. for gateway mode).
     pub fn with_system_prompt(self, prompt: String) -> Self {
-        *self.system_prompt.write().unwrap() = prompt;
+        *self.system_prompt.write().unwrap_or_else(|e| e.into_inner()) = prompt;
         self
     }
 
     /// Update the system prompt at runtime (hot-reload).
     pub fn set_system_prompt(&self, prompt: String) {
-        *self.system_prompt.write().unwrap() = prompt;
+        *self.system_prompt.write().unwrap_or_else(|e| e.into_inner()) = prompt;
     }
 
     /// The LLM model ID in use.
@@ -136,7 +136,7 @@ impl Agent {
     ) -> Result<ConversationResponse> {
         let mut messages = vec![Message {
             role: MessageRole::System,
-            content: self.system_prompt.read().unwrap().clone(),
+            content: self.system_prompt.read().unwrap_or_else(|e| e.into_inner()).clone(),
             media: vec![],
             tool_calls: None,
             tool_call_id: None,
@@ -388,7 +388,7 @@ impl Agent {
     async fn build_initial_messages(&self, task: &Task) -> Vec<Message> {
         let mut messages = vec![Message {
             role: MessageRole::System,
-            content: self.system_prompt.read().unwrap().clone(),
+            content: self.system_prompt.read().unwrap_or_else(|e| e.into_inner()).clone(),
             media: vec![],
             tool_calls: None,
             tool_call_id: None,

@@ -37,7 +37,8 @@ impl ConfigWatcher {
         initial_config: Config,
         tx: watch::Sender<Option<ConfigChange>>,
     ) -> Self {
-        let hash = Self::hash_files(&paths);
+        let buffers = Self::read_files(&paths);
+        let hash = Self::hash_buffers(&buffers);
         Self {
             paths,
             last_hash: hash,
@@ -59,13 +60,15 @@ impl ConfigWatcher {
     }
 
     fn check(&mut self) {
-        let new_hash = Self::hash_files(&self.paths);
+        // Read all files once to avoid TOCTOU between hash and parse.
+        let buffers = Self::read_files(&self.paths);
+        let new_hash = Self::hash_buffers(&buffers);
         if new_hash == self.last_hash {
             return;
         }
         self.last_hash = new_hash;
 
-        let new_config = match self.reload() {
+        let new_config = match Self::parse_first(&buffers) {
             Some(c) => c,
             None => return,
         };
@@ -74,19 +77,16 @@ impl ConfigWatcher {
         self.last_config = new_config;
     }
 
-    fn reload(&self) -> Option<Config> {
-        for path in &self.paths {
-            if path.exists() {
-                match Config::from_file(path) {
-                    Ok(c) => return Some(c),
-                    Err(e) => {
-                        warn!("config reload failed for {}: {e}", path.display());
-                        return None;
-                    }
-                }
+    /// Parse config from the first non-empty buffer.
+    fn parse_first(buffers: &[(PathBuf, Vec<u8>)]) -> Option<Config> {
+        let (path, bytes) = buffers.first()?;
+        match serde_json::from_slice(bytes) {
+            Ok(c) => Some(c),
+            Err(e) => {
+                warn!("config reload failed for {}: {e}", path.display());
+                None
             }
         }
-        None
     }
 
     fn diff_and_emit(&self, new: &Config) {
@@ -160,15 +160,24 @@ impl ConfigWatcher {
         }
     }
 
-    fn hash_files(paths: &[PathBuf]) -> Option<[u8; 32]> {
-        for path in paths {
-            if let Ok(bytes) = std::fs::read(path) {
-                let mut hasher = Sha256::new();
-                hasher.update(&bytes);
-                return Some(hasher.finalize().into());
-            }
+    /// Read all existing config files into memory.
+    fn read_files(paths: &[PathBuf]) -> Vec<(PathBuf, Vec<u8>)> {
+        paths
+            .iter()
+            .filter_map(|p| std::fs::read(p).ok().map(|b| (p.clone(), b)))
+            .collect()
+    }
+
+    /// Hash all file buffers combined. Returns None if no files were read.
+    fn hash_buffers(buffers: &[(PathBuf, Vec<u8>)]) -> Option<[u8; 32]> {
+        if buffers.is_empty() {
+            return None;
         }
-        None
+        let mut hasher = Sha256::new();
+        for (_, bytes) in buffers {
+            hasher.update(bytes);
+        }
+        Some(hasher.finalize().into())
     }
 }
 
@@ -187,10 +196,12 @@ mod tests {
     fn test_hash_detects_change() {
         let dir = TempDir::new().unwrap();
         let path = write_config(&dir, r#"{"provider": "anthropic"}"#);
-        let hash1 = ConfigWatcher::hash_files(&[path.clone()]);
+        let bufs1 = ConfigWatcher::read_files(&[path.clone()]);
+        let hash1 = ConfigWatcher::hash_buffers(&bufs1);
 
         std::fs::write(&path, r#"{"provider": "openai"}"#).unwrap();
-        let hash2 = ConfigWatcher::hash_files(&[path]);
+        let bufs2 = ConfigWatcher::read_files(&[path]);
+        let hash2 = ConfigWatcher::hash_buffers(&bufs2);
 
         assert!(hash1.is_some());
         assert!(hash2.is_some());
@@ -201,9 +212,30 @@ mod tests {
     fn test_no_change_same_hash() {
         let dir = TempDir::new().unwrap();
         let path = write_config(&dir, r#"{"provider": "anthropic"}"#);
-        let hash1 = ConfigWatcher::hash_files(&[path.clone()]);
-        let hash2 = ConfigWatcher::hash_files(&[path]);
+        let bufs1 = ConfigWatcher::read_files(&[path.clone()]);
+        let hash1 = ConfigWatcher::hash_buffers(&bufs1);
+        let bufs2 = ConfigWatcher::read_files(&[path]);
+        let hash2 = ConfigWatcher::hash_buffers(&bufs2);
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_hash_includes_all_files() {
+        let dir = TempDir::new().unwrap();
+        let path1 = dir.path().join("a.json");
+        let path2 = dir.path().join("b.json");
+        std::fs::write(&path1, r#"{"provider": "anthropic"}"#).unwrap();
+        std::fs::write(&path2, r#"{"model": "gpt-4o"}"#).unwrap();
+
+        let bufs = ConfigWatcher::read_files(&[path1.clone(), path2.clone()]);
+        let hash1 = ConfigWatcher::hash_buffers(&bufs);
+
+        // Change second file only
+        std::fs::write(&path2, r#"{"model": "claude"}"#).unwrap();
+        let bufs = ConfigWatcher::read_files(&[path1, path2]);
+        let hash2 = ConfigWatcher::hash_buffers(&bufs);
+
+        assert_ne!(hash1, hash2);
     }
 
     #[test]
