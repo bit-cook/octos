@@ -4,12 +4,13 @@ use std::path::Path;
 
 use eyre::{Result, WrapErr};
 use reqwest::Client;
+use secrecy::{ExposeSecret, SecretString};
 use tracing::debug;
 
 /// Transcribes audio files using the Groq Whisper API.
 pub struct GroqTranscriber {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
 }
 
@@ -17,7 +18,7 @@ impl GroqTranscriber {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
-            api_key: api_key.into(),
+            api_key: SecretString::from(api_key.into()),
             model: "whisper-large-v3".to_string(),
         }
     }
@@ -59,7 +60,7 @@ impl GroqTranscriber {
         let resp = self
             .client
             .post("https://api.groq.com/openai/v1/audio/transcriptions")
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.expose_secret()))
             .multipart(form)
             .timeout(std::time::Duration::from_secs(60))
             .send()

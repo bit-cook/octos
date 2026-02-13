@@ -62,7 +62,7 @@ impl RetryProvider {
     /// First tries to extract an HTTP status code from the error chain
     /// (reqwest errors carry status). Falls back to keyword matching for
     /// non-HTTP errors like connection failures.
-    fn is_retryable_error(error: &eyre::Report) -> bool {
+    pub(crate) fn is_retryable_error(error: &eyre::Report) -> bool {
         // Check for reqwest errors with status codes (most reliable)
         for cause in error.chain() {
             if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {

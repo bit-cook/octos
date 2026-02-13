@@ -55,6 +55,24 @@ pub struct Config {
     /// Embedding configuration for hybrid memory search.
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
+
+    /// Fallback models for provider failover chain.
+    /// When the primary provider fails with a retriable error, the next model is tried.
+    #[serde(default)]
+    pub fallback_models: Vec<FallbackModel>,
+}
+
+/// A fallback model for the provider failover chain.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FallbackModel {
+    /// Provider name (e.g. "openai", "gemini").
+    pub provider: String,
+    /// Model name.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Custom base URL.
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 /// Embedding provider configuration.

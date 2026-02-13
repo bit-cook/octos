@@ -7,6 +7,8 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::vision;
 
 use crate::config::ChatConfig;
@@ -16,7 +18,7 @@ use crate::types::{ChatResponse, ChatStream, StopReason, StreamEvent, TokenUsage
 /// Anthropic Claude provider.
 pub struct AnthropicProvider {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
     base_url: String,
 }
@@ -26,7 +28,7 @@ impl AnthropicProvider {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
-            api_key: api_key.into(),
+            api_key: SecretString::from(api_key.into()),
             model: model.into(),
             base_url: "https://api.anthropic.com".to_string(),
         }
@@ -81,7 +83,7 @@ impl LlmProvider for AnthropicProvider {
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&request)
@@ -178,7 +180,7 @@ impl LlmProvider for AnthropicProvider {
         let response = self
             .client
             .post(format!("{}/v1/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
             .json(&body)

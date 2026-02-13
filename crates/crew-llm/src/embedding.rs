@@ -5,6 +5,8 @@ use eyre::{Result, WrapErr};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::provider::truncate_error_body;
 
 /// Trait for embedding providers.
@@ -20,7 +22,7 @@ pub trait EmbeddingProvider: Send + Sync {
 /// OpenAI-compatible embedding provider.
 pub struct OpenAIEmbedder {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
     base_url: String,
 }
@@ -31,7 +33,7 @@ impl OpenAIEmbedder {
     pub fn new(api_key: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
-            api_key: api_key.into(),
+            api_key: SecretString::from(api_key.into()),
             model: "text-embedding-3-small".to_string(),
             base_url: "https://api.openai.com/v1".to_string(),
         }
@@ -78,7 +80,7 @@ impl EmbeddingProvider for OpenAIEmbedder {
         let resp = self
             .client
             .post(&url)
-            .bearer_auth(&self.api_key)
+            .bearer_auth(self.api_key.expose_secret())
             .json(&body)
             .send()
             .await

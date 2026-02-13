@@ -11,8 +11,9 @@ use crew_agent::{Agent, AgentConfig, MessageTool, SilentReporter, SkillsLoader, 
 use crew_bus::{ChannelManager, CliChannel, CronService, HeartbeatService, SessionManager, create_bus};
 use crew_core::{AgentId, Message, MessageRole, OutboundMessage};
 use crew_llm::{
-    GroqTranscriber, LlmProvider, RetryProvider, anthropic::AnthropicProvider,
-    gemini::GeminiProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
+    GroqTranscriber, LlmProvider, ProviderChain, RetryProvider,
+    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider,
+    openrouter::OpenRouterProvider,
 };
 use crew_memory::{EpisodeStore, MemoryStore};
 use eyre::{Result, WrapErr};
@@ -242,8 +243,22 @@ impl GatewayCommand {
         let model_id = base_provider.model_id().to_string();
         let llm: Arc<dyn LlmProvider> = if self.no_retry {
             base_provider
-        } else {
+        } else if config.fallback_models.is_empty() {
             Arc::new(RetryProvider::new(base_provider))
+        } else {
+            use super::chat::create_provider;
+            let mut providers: Vec<Arc<dyn LlmProvider>> =
+                vec![Arc::new(RetryProvider::new(base_provider))];
+            for fb in &config.fallback_models {
+                match create_provider(&fb.provider, &config, fb.model.clone(), fb.base_url.clone())
+                {
+                    Ok(p) => providers.push(Arc::new(RetryProvider::new(p))),
+                    Err(e) => {
+                        warn!(provider = %fb.provider, error = %e, "skipping fallback provider");
+                    }
+                }
+            }
+            Arc::new(ProviderChain::new(providers))
         };
 
         let data_dir = cwd.join(".crew");

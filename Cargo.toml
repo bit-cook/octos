@@ -45,6 +45,7 @@ base64 = "0.22"
 
 # Crypto
 sha2 = "0.10"
+secrecy = { version = "0.10", features = ["serde"] }
 
 # Error handling (dora-rs pattern)
 eyre = "0.6"

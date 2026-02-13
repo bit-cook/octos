@@ -7,6 +7,8 @@ use futures::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::vision;
 
 use crate::config::ChatConfig;
@@ -17,7 +19,7 @@ use crate::types::{ChatResponse, ChatStream, StopReason, StreamEvent, TokenUsage
 /// OpenAI GPT provider.
 pub struct OpenAIProvider {
     client: Client,
-    api_key: String,
+    api_key: SecretString,
     model: String,
     base_url: String,
 }
@@ -27,7 +29,7 @@ impl OpenAIProvider {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             client: Client::new(),
-            api_key: api_key.into(),
+            api_key: SecretString::from(api_key.into()),
             model: model.into(),
             base_url: "https://api.openai.com/v1".to_string(),
         }
@@ -103,7 +105,7 @@ impl LlmProvider for OpenAIProvider {
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.expose_secret()))
             .header("Content-Type", "application/json")
             .json(&request)
             .send()
@@ -221,7 +223,7 @@ impl LlmProvider for OpenAIProvider {
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", format!("Bearer {}", self.api_key.expose_secret()))
             .header("Content-Type", "application/json")
             .json(&body)
             .send()

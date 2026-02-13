@@ -9,8 +9,9 @@ use colored::Colorize;
 use crew_agent::{Agent, AgentConfig, ConsoleReporter, ToolRegistry};
 use crew_core::{AgentId, Message, MessageRole};
 use crew_llm::{
-    EmbeddingProvider, LlmProvider, OpenAIEmbedder, RetryProvider, anthropic::AnthropicProvider,
-    gemini::GeminiProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
+    EmbeddingProvider, LlmProvider, OpenAIEmbedder, ProviderChain, RetryProvider,
+    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAIProvider,
+    openrouter::OpenRouterProvider,
 };
 use crew_memory::EpisodeStore;
 use eyre::{Result, WrapErr};
@@ -96,15 +97,28 @@ impl ChatCommand {
             })
             .unwrap_or_else(|| "anthropic".to_string());
 
-        // Create LLM provider
+        // Create LLM provider (with optional failover chain)
         let base_provider: Arc<dyn LlmProvider> =
             create_provider(&provider_name, &config, model, base_url)?;
         let model_id = base_provider.model_id().to_string();
 
         let llm: Arc<dyn LlmProvider> = if self.no_retry {
             base_provider
-        } else {
+        } else if config.fallback_models.is_empty() {
             Arc::new(RetryProvider::new(base_provider))
+        } else {
+            let mut providers: Vec<Arc<dyn LlmProvider>> =
+                vec![Arc::new(RetryProvider::new(base_provider))];
+            for fb in &config.fallback_models {
+                match create_provider(&fb.provider, &config, fb.model.clone(), fb.base_url.clone())
+                {
+                    Ok(p) => providers.push(Arc::new(RetryProvider::new(p))),
+                    Err(e) => {
+                        tracing::warn!(provider = %fb.provider, error = %e, "skipping fallback provider");
+                    }
+                }
+            }
+            Arc::new(ProviderChain::new(providers))
         };
 
         // Create stores

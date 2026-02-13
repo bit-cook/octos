@@ -9,6 +9,7 @@
 mod config;
 pub mod context;
 pub mod embedding;
+mod failover;
 pub mod pricing;
 mod provider;
 mod retry;
@@ -24,6 +25,7 @@ pub mod transcription;
 
 pub use config::ChatConfig;
 pub use embedding::{EmbeddingProvider, OpenAIEmbedder};
+pub use failover::ProviderChain;
 pub use provider::LlmProvider;
 pub use retry::{RetryConfig, RetryProvider};
 pub use transcription::GroqTranscriber;
