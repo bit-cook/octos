@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use std::path::Path;
 
 use super::Executable;
-use crate::commands::chat::create_embedder;
+use crate::commands::chat::{create_embedder, resolve_provider_policy};
 use crate::config::{Config, detect_provider};
 use crate::config_watcher::{ConfigChange, ConfigWatcher};
 use crate::cron_tool::CronTool;
@@ -239,6 +239,7 @@ impl GatewayCommand {
             }
         };
 
+        let model_id = base_provider.model_id().to_string();
         let llm: Arc<dyn LlmProvider> = if self.no_retry {
             base_provider
         } else {
@@ -318,6 +319,11 @@ impl GatewayCommand {
         // Apply tool policy from config
         if let Some(ref policy) = config.tool_policy {
             tools.apply_policy(policy);
+        }
+
+        // Apply provider-specific tool policy
+        if let Some(policy) = resolve_provider_policy(&config, &provider_name, &model_id) {
+            tools.set_provider_policy(policy);
         }
 
         tools.register(CronTool::new(cron_service.clone()));

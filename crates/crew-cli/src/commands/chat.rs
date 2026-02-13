@@ -99,6 +99,7 @@ impl ChatCommand {
         // Create LLM provider
         let base_provider: Arc<dyn LlmProvider> =
             create_provider(&provider_name, &config, model, base_url)?;
+        let model_id = base_provider.model_id().to_string();
 
         let llm: Arc<dyn LlmProvider> = if self.no_retry {
             base_provider
@@ -137,6 +138,11 @@ impl ChatCommand {
         // Apply tool policy from config
         if let Some(ref policy) = config.tool_policy {
             tools.apply_policy(policy);
+        }
+
+        // Apply provider-specific tool policy
+        if let Some(policy) = resolve_provider_policy(&config, &provider_name, &model_id) {
+            tools.set_provider_policy(policy);
         }
 
         // Set up Ctrl+C handler
@@ -262,6 +268,27 @@ impl ChatCommand {
     }
 }
 
+/// Find the matching provider-specific tool policy for the active model.
+/// Checks model ID first (e.g. "claude-sonnet-4-20250514"), then provider name (e.g. "gemini").
+pub(crate) fn resolve_provider_policy(
+    config: &Config,
+    provider_name: &str,
+    model_id: &str,
+) -> Option<crew_agent::ToolPolicy> {
+    if config.tool_policy_by_provider.is_empty() {
+        return None;
+    }
+    // Exact model ID match first
+    if let Some(policy) = config.tool_policy_by_provider.get(model_id) {
+        return Some(policy.clone());
+    }
+    // Provider name match
+    if let Some(policy) = config.tool_policy_by_provider.get(provider_name) {
+        return Some(policy.clone());
+    }
+    None
+}
+
 /// Create an embedding provider from config, if configured.
 pub(crate) fn create_embedder(config: &Config) -> Option<Arc<dyn EmbeddingProvider>> {
     let cfg = config.embedding.as_ref()?;
@@ -271,6 +298,47 @@ pub(crate) fn create_embedder(config: &Config) -> Option<Arc<dyn EmbeddingProvid
         e = e.with_base_url(url);
     }
     Some(Arc::new(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_provider_policy_model_id_match() {
+        let json = r#"{
+            "tool_policy_by_provider": {
+                "gemini": {"deny": ["diff_edit"]},
+                "claude-sonnet-4-20250514": {"allow": ["shell"]}
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let policy =
+            resolve_provider_policy(&config, "anthropic", "claude-sonnet-4-20250514").unwrap();
+        assert!(policy.is_allowed("shell"));
+        assert!(!policy.is_allowed("read_file"));
+    }
+
+    #[test]
+    fn test_resolve_provider_policy_provider_fallback() {
+        let json = r#"{
+            "tool_policy_by_provider": {
+                "gemini": {"deny": ["diff_edit"]}
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        let policy = resolve_provider_policy(&config, "gemini", "gemini-2.0-flash").unwrap();
+        assert!(!policy.is_allowed("diff_edit"));
+        assert!(policy.is_allowed("shell"));
+    }
+
+    #[test]
+    fn test_resolve_provider_policy_none() {
+        let config = Config::default();
+        assert!(
+            resolve_provider_policy(&config, "anthropic", "claude-sonnet-4-20250514").is_none()
+        );
+    }
 }
 
 /// Create an LLM provider from name and config.

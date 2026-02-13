@@ -47,6 +47,11 @@ pub struct Config {
     #[serde(default)]
     pub tool_policy: Option<crew_agent::ToolPolicy>,
 
+    /// Per-provider tool policies. Key = model ID or provider name prefix.
+    /// Example: `{"gemini": {"deny": ["diff_edit"]}}`.
+    #[serde(default)]
+    pub tool_policy_by_provider: std::collections::HashMap<String, crew_agent::ToolPolicy>,
+
     /// Embedding configuration for hybrid memory search.
     #[serde(default)]
     pub embedding: Option<EmbeddingConfig>,
@@ -546,6 +551,30 @@ mod tests {
         let json = r#"{"provider": "anthropic"}"#;
         let config: Config = serde_json::from_str(json).unwrap();
         assert!(config.embedding.is_none());
+    }
+
+    #[test]
+    fn test_tool_policy_by_provider_deserialize() {
+        let json = r#"{
+            "provider": "anthropic",
+            "tool_policy_by_provider": {
+                "gemini": {"deny": ["diff_edit"]},
+                "claude-sonnet-4-20250514": {"allow": ["shell", "read_file"]}
+            }
+        }"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.tool_policy_by_provider.len(), 2);
+        assert!(config.tool_policy_by_provider.contains_key("gemini"));
+        assert!(config
+            .tool_policy_by_provider
+            .contains_key("claude-sonnet-4-20250514"));
+    }
+
+    #[test]
+    fn test_tool_policy_by_provider_absent() {
+        let json = r#"{"provider": "anthropic"}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert!(config.tool_policy_by_provider.is_empty());
     }
 
     #[test]

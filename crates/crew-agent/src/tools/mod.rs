@@ -41,6 +41,8 @@ pub trait Tool: Send + Sync {
 /// Registry of available tools.
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,
+    /// Provider-specific policy that filters specs() output without removing tools.
+    provider_policy: Option<ToolPolicy>,
 }
 
 impl Default for ToolRegistry {
@@ -54,6 +56,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: HashMap::new(),
+            provider_policy: None,
         }
     }
 
@@ -67,10 +70,15 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
-    /// Get tool specifications for the LLM.
+    /// Get tool specifications for the LLM, filtered by provider policy if set.
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools
             .values()
+            .filter(|t| {
+                self.provider_policy
+                    .as_ref()
+                    .is_none_or(|p| p.is_allowed(t.name()))
+            })
             .map(|t| ToolSpec {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
@@ -100,6 +108,18 @@ impl ToolRegistry {
             return;
         }
         self.retain(|name| policy.is_allowed(name));
+    }
+
+    /// Set a provider-specific policy that filters `specs()` output.
+    ///
+    /// Unlike `apply_policy` which permanently removes tools, this only hides
+    /// tools from the LLM. Tools remain registered and can still be executed
+    /// (e.g. by subagents using a different provider).
+    pub fn set_provider_policy(&mut self, policy: ToolPolicy) {
+        if policy.is_empty() {
+            return;
+        }
+        self.provider_policy = Some(policy);
     }
 
     /// Execute a tool by name.

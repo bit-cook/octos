@@ -276,4 +276,33 @@ mod tests {
 
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_provider_policy_filters_specs() {
+        let dir = setup_test_dir();
+        let mut registry = ToolRegistry::with_builtins(dir.path());
+        let all_count = registry.specs().len();
+
+        // Set provider policy that denies diff_edit and web_search
+        let policy: ToolPolicy = serde_json::from_value(serde_json::json!({
+            "deny": ["diff_edit", "web_search"]
+        }))
+        .unwrap();
+        registry.set_provider_policy(policy);
+
+        let filtered = registry.specs();
+        let names: Vec<_> = filtered.iter().map(|s| s.name.as_str()).collect();
+        assert!(!names.contains(&"diff_edit"));
+        assert!(!names.contains(&"web_search"));
+        assert!(names.contains(&"shell"));
+        assert!(names.contains(&"read_file"));
+        assert_eq!(filtered.len(), all_count - 2);
+
+        // Tools still exist in registry (can be executed directly)
+        let result = registry
+            .execute("read_file", &serde_json::json!({"path": "test.rs"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+    }
 }
