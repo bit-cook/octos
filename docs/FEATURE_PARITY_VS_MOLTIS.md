@@ -42,7 +42,7 @@ Both are Rust, single-binary, multi-provider, sandboxed agent frameworks.
 
 | # | Feature | Moltis Implementation | Improvement Potential for crew-rs |
 |---|---|---|---|
-| 1 | **Hook/Lifecycle System** | 17 lifecycle events (BeforeToolCall, BeforeLLMCall, MessageSending, etc.). Sequential for modifying, parallel for read-only. Shell protocol (JSON stdin, exit code + stdout). Circuit breaker (3 failures -> auto-disable). HOOK.md discovery. | **HIGH** -- Would enable user-defined approval workflows, audit logging, content filtering, and tool gating without code changes. Could replace SafePolicy with a more flexible hook-based approach. |
+| 1 | ~~**Hook/Lifecycle System**~~ | 17 lifecycle events (BeforeToolCall, BeforeLLMCall, MessageSending, etc.). Sequential for modifying, parallel for read-only. Shell protocol (JSON stdin, exit code + stdout). Circuit breaker (3 failures -> auto-disable). HOOK.md discovery. | **DONE** -- 4 events (before/after tool call, before/after LLM call). Shell protocol (JSON stdin, exit codes 0/1/2+). Circuit breaker with configurable threshold. Tool filtering. Env sanitization via BLOCKED_ENV_VARS. Wired into chat, gateway, serve. Config hot-reload aware. |
 | 2 | **Built-in Web UI** | SPA embedded via `include_dir!()`. WebSocket streaming. Settings panel. Hook editor. Session browser. | **MEDIUM** -- crew-rs has a REST API (feature-gated) but no bundled UI. Could embed a simple SPA for session browsing and config editing. |
 | 3 | **WebAuthn / Passkey Auth** | FIDO2 credentials (Touch ID, security keys). Stored in SQLite. | **LOW** -- crew-rs targets CLI/bot use cases where passkeys are less relevant. |
 | 4 | **Apple Container** (macOS native containers) | Native macOS containerization beyond sandbox-exec. | **LOW** -- crew-rs already has sandbox-exec. Apple Container is newer/niche. |
@@ -80,7 +80,7 @@ Both are Rust, single-binary, multi-provider, sandboxed agent frameworks.
 
 2. ~~**Provider failover chain**~~ DONE -- `ProviderChain` with circuit breaker (degrades after 3 consecutive failures, resets on success).
 
-3. **Hook/lifecycle system** -- Even a simplified version with key events (BeforeToolCall, AfterToolCall, BeforeLLMCall) and shell protocol (JSON stdin, exit code control flow) would add powerful extensibility. HOOK.md discovery with eligibility checks (requires_bins, requires_env). Circuit breaker for auto-disabling broken hooks.
+3. ~~**Hook/lifecycle system**~~ DONE -- 4 events (before/after tool/LLM), shell protocol (JSON stdin, exit codes), circuit breaker, tool filtering, env sanitization, config hot-reload.
 
 ### Tier 2 -- Medium Impact
 
@@ -107,5 +107,5 @@ Both are Rust, single-binary, multi-provider, sandboxed agent frameworks.
 ---
 
 *Analysis date: 2026-02-13*
-*Last updated: 2026-02-13 (8 of 12 improvements implemented)*
+*Last updated: 2026-02-13 (9 of 12 improvements implemented)*
 *Sources: [Moltis GitHub](https://github.com/moltis-org/moltis), [DeepWiki](https://deepwiki.com/moltis-org/moltis)*
