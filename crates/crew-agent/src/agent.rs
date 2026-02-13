@@ -633,6 +633,17 @@ impl Agent {
         }
     }
 
+    /// Wait until the shutdown flag is set. Used with `tokio::select!`
+    /// to cancel long-running operations on Ctrl+C.
+    async fn wait_for_shutdown(&self) {
+        loop {
+            if self.shutdown.load(Ordering::Relaxed) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     async fn consume_stream(
         &self,
         mut stream: ChatStream,
@@ -649,7 +660,17 @@ impl Agent {
         let mut usage = crew_llm::TokenUsage::default();
         let mut stop_reason = StopReason::EndTurn;
 
-        while let Some(event) = stream.next().await {
+        loop {
+            let event = tokio::select! {
+                event = stream.next() => event,
+                _ = self.wait_for_shutdown() => {
+                    warn!("shutdown received during streaming");
+                    break;
+                }
+            };
+
+            let Some(event) = event else { break };
+
             match event {
                 StreamEvent::TextDelta(delta) => {
                     self.reporter.report(ProgressEvent::StreamChunk {

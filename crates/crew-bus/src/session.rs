@@ -86,8 +86,18 @@ impl SessionManager {
 
     /// Get the JSONL file path for a session key.
     fn session_path(&self, key: &SessionKey) -> PathBuf {
-        // Replace characters that are invalid in filenames
-        let safe_name = key.0.replace(['/', '\\', ':'], "_");
+        // Whitelist: keep only alphanumeric, dash, underscore, dot
+        let safe_name: String = key
+            .0
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         self.sessions_dir.join(format!("{safe_name}.jsonl"))
     }
 

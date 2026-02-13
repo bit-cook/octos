@@ -80,6 +80,8 @@ pub struct ConsoleReporter {
     use_colors: bool,
     /// Whether to show verbose output.
     verbose: bool,
+    /// Buffered stdout writer for streaming chunks.
+    stdout: std::sync::Mutex<std::io::BufWriter<std::io::Stdout>>,
 }
 
 impl Default for ConsoleReporter {
@@ -94,6 +96,7 @@ impl ConsoleReporter {
         Self {
             use_colors: true,
             verbose: false,
+            stdout: std::sync::Mutex::new(std::io::BufWriter::new(std::io::stdout())),
         }
     }
 
@@ -303,11 +306,20 @@ impl ProgressReporter for ConsoleReporter {
             }
             ProgressEvent::StreamChunk { text, .. } => {
                 use std::io::Write;
-                print!("{}", text);
-                let _ = std::io::stdout().flush();
+                if let Ok(mut buf) = self.stdout.lock() {
+                    let _ = write!(buf, "{}", text);
+                    // Flush only on newlines to reduce syscalls
+                    if text.contains('\n') {
+                        let _ = buf.flush();
+                    }
+                }
             }
             ProgressEvent::StreamDone { .. } => {
-                println!();
+                use std::io::Write;
+                if let Ok(mut buf) = self.stdout.lock() {
+                    let _ = writeln!(buf);
+                    let _ = buf.flush();
+                }
             }
         }
     }
