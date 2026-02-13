@@ -95,11 +95,15 @@ pub struct HookExecutor {
 
 impl HookExecutor {
     pub fn new(hooks: Vec<HookConfig>) -> Self {
+        Self::with_threshold(hooks, 3)
+    }
+
+    pub fn with_threshold(hooks: Vec<HookConfig>, failure_threshold: u32) -> Self {
         let failures = (0..hooks.len()).map(|_| AtomicU32::new(0)).collect();
         Self {
             hooks,
             failures,
-            failure_threshold: 3,
+            failure_threshold,
         }
     }
 
@@ -257,11 +261,24 @@ impl HookExecutor {
 }
 
 /// Expand leading `~` or `~/` to the user's home directory.
+/// Also handles `~username/` by looking up `/home/username` (Unix) or
+/// `/Users/username` (macOS).
 fn expand_tilde(path: &str) -> String {
     if path == "~" || path.starts_with("~/") {
         if let Some(home) = dirs::home_dir() {
             return format!("{}{}", home.display(), &path[1..]);
         }
+    } else if let Some(rest) = path.strip_prefix('~') {
+        // ~username or ~username/...
+        let (username, suffix) = match rest.find('/') {
+            Some(pos) => (&rest[..pos], &rest[pos..]),
+            None => (rest, ""),
+        };
+        #[cfg(target_os = "macos")]
+        let home_base = "/Users";
+        #[cfg(not(target_os = "macos"))]
+        let home_base = "/home";
+        return format!("{}/{}{}", home_base, username, suffix);
     }
     path.to_string()
 }
@@ -351,6 +368,15 @@ mod tests {
         let expanded = expand_tilde("~/foo/bar");
         assert!(!expanded.starts_with('~'));
         assert!(expanded.ends_with("/foo/bar"));
+
+        // ~username expansion
+        let expanded = expand_tilde("~alice/scripts/hook.sh");
+        assert!(expanded.ends_with("/alice/scripts/hook.sh"));
+        assert!(!expanded.starts_with('~'));
+
+        // ~username without trailing path
+        let expanded = expand_tilde("~bob");
+        assert!(expanded.ends_with("/bob"));
 
         // Non-tilde paths unchanged
         assert_eq!(expand_tilde("/usr/bin/foo"), "/usr/bin/foo");

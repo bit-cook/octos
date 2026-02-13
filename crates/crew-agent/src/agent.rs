@@ -504,16 +504,8 @@ impl Agent {
                     StopReason::EndTurn | StopReason::StopSequence => {
                         if self.config.save_episodes {
                             let summary = response.content.clone().unwrap_or_default();
-                            let summary_truncated = if summary.len() > 500 {
-                                // Find a valid char boundary at or before byte 500
-                                let mut end = 500;
-                                while !summary.is_char_boundary(end) {
-                                    end -= 1;
-                                }
-                                format!("{}...", &summary[..end])
-                            } else {
-                                summary
-                            };
+                            let summary_truncated =
+                                crew_core::truncated_utf8(&summary, 500, "...");
 
                             let mut episode = Episode::new(
                                 task.id.clone(),
@@ -798,11 +790,8 @@ impl Agent {
                             });
                         }
 
-                        let output_preview = if tool_result.output.len() > 200 {
-                            format!("{}...", &tool_result.output[..200])
-                        } else {
-                            tool_result.output.clone()
-                        };
+                        let output_preview =
+                            crew_core::truncated_utf8(&tool_result.output, 200, "...");
 
                         self.reporter.report(ProgressEvent::ToolCompleted {
                             name: tool_call.name.clone(),
@@ -847,15 +836,7 @@ impl Agent {
                         tool_name: Some(tool_call.name.clone()),
                         arguments: None,
                         tool_id: Some(tool_call.id.clone()),
-                        result: Some(if content.len() > 500 {
-                            let mut end = 500;
-                            while !content.is_char_boundary(end) {
-                                end -= 1;
-                            }
-                            format!("{}...", &content[..end])
-                        } else {
-                            content.clone()
-                        }),
+                        result: Some(crew_core::truncated_utf8(&content, 500, "...")),
                         success: Some(tool_success),
                         duration_ms: Some(duration.as_millis() as u64),
                         message_count: None,

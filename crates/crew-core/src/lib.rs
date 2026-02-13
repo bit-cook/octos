@@ -18,4 +18,4 @@ pub use gateway::{InboundMessage, OutboundMessage};
 pub use message::AgentMessage;
 pub use task::{Task, TaskContext, TaskKind, TaskResult, TaskStatus, TokenUsage};
 pub use types::{AgentId, EpisodeRef, Message, MessageRole, SessionKey, TaskId, ToolCall};
-pub use utils::truncate_utf8;
+pub use utils::{truncate_utf8, truncated_utf8};
