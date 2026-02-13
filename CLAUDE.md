@@ -79,9 +79,13 @@ Splits long messages into channel-safe chunks (paragraph > newline > sentence > 
 
 JSONL persistence with in-memory cache. Session forking (`/new` command) with parent_key tracking. Percent-encoded filenames. Atomic write-then-rename for crash safety.
 
+### Hooks (`crew-agent/src/hooks.rs`)
+
+Lifecycle hook system for running shell commands at agent events. 4 events: `before_tool_call`, `after_tool_call`, `before_llm_call`, `after_llm_call`. Before-hooks can deny operations (exit code 1). Shell protocol: JSON payload on stdin, exit code semantics (0=allow, 1=deny, 2+=error). Circuit breaker auto-disables hooks after 3 consecutive failures (configurable via `HookExecutor::with_threshold()`). Commands use argv array (no shell interpretation). Environment sanitized via shared `BLOCKED_ENV_VARS`. Tilde expansion supports `~/` and `~username/`. Config: `hooks` array in config.json with `event`, `command`, `timeout_ms` (default 5000), `tool_filter`. Wired in chat.rs, gateway.rs, serve.rs. Hook changes trigger restart via config_watcher.
+
 ### Config Hot-Reload (`crew-cli/src/config_watcher.rs`)
 
-SHA-256 hash-based change detection. Hot-reload for system prompt; restart-required for provider/model changes.
+SHA-256 hash-based change detection. Hot-reload for system prompt; restart-required for provider/model/hooks changes.
 
 ## Key Types
 
@@ -89,7 +93,7 @@ SHA-256 hash-based change detection. Hot-reload for system prompt; restart-requi
 - `Message` (crew-core): role (System/User/Assistant/Tool), content, tool_call_id
 - `ChatResponse` (crew-llm): content, tool_calls, stop_reason, token usage
 - `AgentConfig` (crew-agent): max_iterations (default 50), max_tokens, save_episodes
-- `truncate_utf8` (crew-core): Shared UTF-8 safe string truncation utility
+- `truncate_utf8`/`truncated_utf8` (crew-core): Shared UTF-8 safe string truncation (in-place and copying variants)
 
 ## Project Conventions
 
@@ -101,4 +105,4 @@ SHA-256 hash-based change detection. Hot-reload for system prompt; restart-requi
 - API keys from env vars via `api_key_env` or OAuth via `crew auth login`
 - Email channel feature-gated: `async-imap` + `lettre` + `mailparse`
 - `ShellTool` has `SafePolicy` that denies dangerous commands (rm -rf /, dd, mkfs, fork bomb)
-- `BLOCKED_ENV_VARS` shared across sandbox backends and MCP (18 vars: LD_PRELOAD, DYLD_*, NODE_OPTIONS, etc.)
+- `BLOCKED_ENV_VARS` shared across sandbox backends, MCP, and hooks (18 vars: LD_PRELOAD, DYLD_*, NODE_OPTIONS, etc.)
