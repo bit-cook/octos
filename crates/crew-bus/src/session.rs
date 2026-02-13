@@ -153,7 +153,7 @@ impl SessionManager {
     }
 
     /// Rewrite a session's JSONL file from the in-memory state.
-    /// This replaces the file entirely (meta + all current messages).
+    /// Uses atomic write-then-rename to avoid corruption on crash.
     pub fn rewrite(&self, key: &SessionKey) -> Result<()> {
         use std::io::Write;
 
@@ -163,7 +163,9 @@ impl SessionManager {
             .ok_or_else(|| eyre::eyre!("session not in cache: {}", key))?;
 
         let path = self.session_path(key);
-        let mut file = std::fs::File::create(&path)?;
+        let tmp_path = path.with_extension("jsonl.tmp");
+
+        let mut file = std::fs::File::create(&tmp_path)?;
 
         let meta = SessionMeta {
             session_key: key.0.clone(),
@@ -175,6 +177,10 @@ impl SessionManager {
         for msg in &session.messages {
             writeln!(file, "{}", serde_json::to_string(msg)?)?;
         }
+        file.flush()?;
+
+        // Atomic rename (on same filesystem)
+        std::fs::rename(&tmp_path, &path)?;
 
         debug!(key = %key, messages = session.messages.len(), "Rewrote session to disk");
         Ok(())

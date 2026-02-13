@@ -3,6 +3,10 @@
 use crew_core::Message;
 
 /// Known context window sizes (in tokens) for common models.
+///
+/// These are best-effort defaults that may become stale as providers update
+/// their models. Providers can override `LlmProvider::context_window()` to
+/// return accurate values from API metadata or configuration.
 pub fn context_window_tokens(model_id: &str) -> u32 {
     let m = model_id.to_lowercase();
     match () {
@@ -17,24 +21,33 @@ pub fn context_window_tokens(model_id: &str) -> u32 {
         // Google Gemini
         _ if m.contains("gemini-2") || m.contains("gemini-1.5") => 1_000_000,
         _ if m.contains("gemini") => 128_000,
-        // Chinese providers
+        // DeepSeek
         _ if m.contains("deepseek") => 128_000,
+        // Moonshot / Kimi
         _ if m.contains("kimi") || m.contains("moonshot") => 128_000,
+        // Qwen / DashScope
         _ if m.contains("qwen") => 128_000,
+        // Zhipu / GLM
         _ if m.contains("glm") || m.contains("zhipu") => 128_000,
+        // MiniMax
         _ if m.contains("minimax") => 128_000,
-        // Local
+        // Local (Llama, etc.)
         _ if m.contains("llama") => 128_000,
-        // Conservative default
+        // Conservative default for unknown models
         _ => 128_000,
     }
 }
 
 /// Estimate token count from text using character heuristic.
-/// ~4 chars per token for English/code. Rough but sufficient for guard purposes.
+///
+/// Uses ~4 chars/token for ASCII (English/code) and ~1.5 chars/token for
+/// non-ASCII (CJK, emoji, etc.). This is a rough guard — not a precise
+/// tokenizer — so it intentionally overestimates slightly to be safe.
 pub fn estimate_tokens(text: &str) -> u32 {
-    let chars = text.len() as u32;
-    (chars / 4).max(1)
+    let ascii_chars = text.bytes().filter(|b| b.is_ascii()).count() as u32;
+    let non_ascii_chars = text.chars().count() as u32 - ascii_chars;
+    let tokens = ascii_chars / 4 + (non_ascii_chars as f32 / 1.5) as u32;
+    tokens.max(1)
 }
 
 /// Estimate tokens for a message (content + serialized tool calls + overhead).
@@ -77,10 +90,18 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_tokens() {
-        // ~4 chars per token
+    fn test_estimate_tokens_ascii() {
+        // ~4 ASCII chars per token
         assert_eq!(estimate_tokens("hello world"), 2); // 11/4 = 2
         assert_eq!(estimate_tokens("a"), 1); // min 1
+    }
+
+    #[test]
+    fn test_estimate_tokens_cjk() {
+        // CJK: ~1.5 chars per token, should estimate higher than pure ASCII rate
+        let cjk = "你好世界测试"; // 6 CJK chars
+        let ascii = "abcdef"; // 6 ASCII chars = 1 token
+        assert!(estimate_tokens(cjk) > estimate_tokens(ascii));
     }
 
     #[test]

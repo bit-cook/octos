@@ -7,11 +7,28 @@ use crew_llm::{ChatConfig, LlmProvider};
 use eyre::Result;
 use tracing::debug;
 
-/// Minimum messages before compaction triggers.
-const COMPACTION_THRESHOLD: usize = 40;
+/// Default minimum messages before compaction triggers.
+const DEFAULT_THRESHOLD: usize = 40;
 
-/// Number of recent messages to keep intact (not summarized).
-const KEEP_RECENT: usize = 10;
+/// Default number of recent messages to keep intact (not summarized).
+const DEFAULT_KEEP_RECENT: usize = 10;
+
+/// Configuration for session compaction behavior.
+pub struct CompactionConfig {
+    /// Minimum total messages before compaction triggers.
+    pub threshold: usize,
+    /// Number of recent messages to keep intact (not summarized).
+    pub keep_recent: usize,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            threshold: DEFAULT_THRESHOLD,
+            keep_recent: DEFAULT_KEEP_RECENT,
+        }
+    }
+}
 
 /// Compact a session if it exceeds the threshold.
 ///
@@ -22,14 +39,24 @@ pub async fn maybe_compact(
     key: &SessionKey,
     llm: &dyn LlmProvider,
 ) -> Result<bool> {
+    maybe_compact_with_config(session_mgr, key, llm, &CompactionConfig::default()).await
+}
+
+/// Compact a session with custom configuration.
+pub async fn maybe_compact_with_config(
+    session_mgr: &mut SessionManager,
+    key: &SessionKey,
+    llm: &dyn LlmProvider,
+    config: &CompactionConfig,
+) -> Result<bool> {
     let session = session_mgr.get_or_create(key);
     let total = session.messages.len();
 
-    if total < COMPACTION_THRESHOLD {
+    if total < config.threshold {
         return Ok(false);
     }
 
-    let to_summarize = total - KEEP_RECENT;
+    let to_summarize = total - config.keep_recent;
     debug!(session = %key, total, to_summarize, "compacting session");
 
     // Build structured conversation transcript using JSON to prevent
@@ -71,13 +98,13 @@ pub async fn maybe_compact(
         },
     ];
 
-    let config = ChatConfig {
+    let chat_config = ChatConfig {
         max_tokens: Some(1024),
         temperature: Some(0.0),
         ..Default::default()
     };
 
-    let response = llm.chat(&messages, &[], &config).await?;
+    let response = llm.chat(&messages, &[], &chat_config).await?;
     let summary = response
         .content
         .unwrap_or_else(|| "[Summary unavailable]".to_string());
@@ -104,7 +131,7 @@ pub async fn maybe_compact(
     debug!(
         session = %key,
         before = total,
-        after = KEEP_RECENT + 1,
+        after = config.keep_recent + 1,
         "session compacted"
     );
 

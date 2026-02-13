@@ -118,7 +118,7 @@ impl LlmProvider for OpenRouterProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            eyre::bail!("OpenRouter API error: {status} - {body}");
+            eyre::bail!("OpenRouter API error: {status} - {}", crate::provider::truncate_error_body(&body));
         }
 
         let api_response: ApiResponse = response
@@ -241,7 +241,7 @@ impl LlmProvider for OpenRouterProvider {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            eyre::bail!("OpenRouter API error: {status} - {text}");
+            eyre::bail!("OpenRouter API error: {status} - {}", crate::provider::truncate_error_body(&text));
         }
 
         let sse_stream = crate::sse::parse_sse_response(response);

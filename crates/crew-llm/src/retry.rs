@@ -57,38 +57,44 @@ impl RetryProvider {
         self
     }
 
-    /// Check if an error is retryable based on the error message.
+    /// Check if an error is retryable.
+    ///
+    /// First tries to extract an HTTP status code from the error chain
+    /// (reqwest errors carry status). Falls back to keyword matching for
+    /// non-HTTP errors like connection failures.
     fn is_retryable_error(error: &eyre::Report) -> bool {
-        let error_str = error.to_string().to_lowercase();
-
-        // Rate limiting
-        if error_str.contains("429") || error_str.contains("rate limit") {
-            return true;
+        // Check for reqwest errors with status codes (most reliable)
+        for cause in error.chain() {
+            if let Some(reqwest_err) = cause.downcast_ref::<reqwest::Error>() {
+                if let Some(status) = reqwest_err.status() {
+                    return matches!(
+                        status.as_u16(),
+                        429 | 500 | 502 | 503 | 504 | 529
+                    );
+                }
+                // Connection/timeout errors from reqwest are retryable
+                if reqwest_err.is_connect() || reqwest_err.is_timeout() {
+                    return true;
+                }
+            }
         }
 
-        // Server errors (5xx)
-        if error_str.contains("500")
-            || error_str.contains("502")
-            || error_str.contains("503")
-            || error_str.contains("504")
-            || error_str.contains("internal server error")
-            || error_str.contains("bad gateway")
-            || error_str.contains("service unavailable")
-            || error_str.contains("gateway timeout")
+        // Fallback: match on formatted error for provider bail! messages
+        // e.g. "Anthropic API error: 429 - ..."
+        let error_str = error.to_string();
+        for code in ["429", "500", "502", "503", "504", "529"] {
+            if error_str.contains(&format!("API error: {code}")) {
+                return true;
+            }
+        }
+
+        // Network-level errors without reqwest context
+        let lower = error_str.to_lowercase();
+        if lower.contains("connection refused")
+            || lower.contains("connection reset")
+            || lower.contains("timed out")
+            || lower.contains("overloaded")
         {
-            return true;
-        }
-
-        // Network errors
-        if error_str.contains("connection")
-            || error_str.contains("timeout")
-            || error_str.contains("network")
-        {
-            return true;
-        }
-
-        // Overloaded
-        if error_str.contains("overloaded") {
             return true;
         }
 
@@ -198,19 +204,31 @@ mod tests {
 
     #[test]
     fn test_is_retryable_429() {
-        let err = eyre::eyre!("API error: 429 - rate limited");
+        let err = eyre::eyre!("Anthropic API error: 429 - rate limited");
         assert!(RetryProvider::is_retryable_error(&err));
     }
 
     #[test]
     fn test_is_retryable_500() {
-        let err = eyre::eyre!("API error: 500 - internal server error");
+        let err = eyre::eyre!("OpenAI API error: 500 - internal server error");
         assert!(RetryProvider::is_retryable_error(&err));
     }
 
     #[test]
     fn test_is_retryable_503() {
-        let err = eyre::eyre!("API error: 503 - service unavailable");
+        let err = eyre::eyre!("Gemini API error: 503 - service unavailable");
+        assert!(RetryProvider::is_retryable_error(&err));
+    }
+
+    #[test]
+    fn test_is_retryable_connection() {
+        let err = eyre::eyre!("connection refused");
+        assert!(RetryProvider::is_retryable_error(&err));
+    }
+
+    #[test]
+    fn test_is_retryable_overloaded() {
+        let err = eyre::eyre!("API overloaded");
         assert!(RetryProvider::is_retryable_error(&err));
     }
 
@@ -223,6 +241,12 @@ mod tests {
     #[test]
     fn test_not_retryable_400() {
         let err = eyre::eyre!("API error: 400 - bad request");
+        assert!(!RetryProvider::is_retryable_error(&err));
+    }
+
+    #[test]
+    fn test_not_retryable_generic() {
+        let err = eyre::eyre!("invalid JSON in response");
         assert!(!RetryProvider::is_retryable_error(&err));
     }
 

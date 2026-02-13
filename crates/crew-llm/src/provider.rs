@@ -59,3 +59,13 @@ pub trait LlmProvider: Send + Sync {
     /// Get the provider name (e.g., "anthropic", "openai").
     fn provider_name(&self) -> &str;
 }
+
+/// Truncate an API error body to avoid leaking verbose internal details.
+/// Keeps the first 200 chars which typically contain the error message/code.
+pub(crate) fn truncate_error_body(body: &str) -> String {
+    if body.len() <= 200 {
+        body.to_string()
+    } else {
+        format!("{}... ({} bytes total)", &body[..200], body.len())
+    }
+}
