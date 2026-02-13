@@ -23,6 +23,8 @@ pub struct SpawnTool {
     inbound_tx: tokio::sync::mpsc::Sender<InboundMessage>,
     origin: std::sync::Mutex<(String, String)>,
     worker_count: AtomicU32,
+    /// Inherited provider policy applied to subagent registries.
+    provider_policy: Option<ToolPolicy>,
 }
 
 impl SpawnTool {
@@ -39,7 +41,14 @@ impl SpawnTool {
             inbound_tx,
             origin: std::sync::Mutex::new(("cli".into(), "default".into())),
             worker_count: AtomicU32::new(0),
+            provider_policy: None,
         }
+    }
+
+    /// Inherit a provider-specific tool policy from the parent agent.
+    pub fn with_provider_policy(mut self, policy: Option<ToolPolicy>) -> Self {
+        self.provider_policy = policy;
+        self
     }
 
     /// Update the origin context for result delivery (called per inbound message).
@@ -142,6 +151,9 @@ impl Tool for SpawnTool {
                 deny: vec!["spawn".into()],
             };
             tools.apply_policy(&policy);
+            if let Some(ref pp) = self.provider_policy {
+                tools.set_provider_policy(pp.clone());
+            }
             let worker = Agent::new(worker_id, self.llm.clone(), tools, self.memory.clone());
 
             let subtask = Task::new(
@@ -177,6 +189,7 @@ impl Tool for SpawnTool {
             let working_dir = self.working_dir.clone();
             let inbound_tx = self.inbound_tx.clone();
             let wid = worker_id.clone();
+            let provider_policy = self.provider_policy.clone();
 
             tokio::spawn(async move {
                 let mut tools = ToolRegistry::with_builtins(&working_dir);
@@ -185,6 +198,9 @@ impl Tool for SpawnTool {
                     deny: vec!["spawn".into()],
                 };
                 tools.apply_policy(&policy);
+                if let Some(pp) = provider_policy {
+                    tools.set_provider_policy(pp);
+                }
                 let worker = Agent::new(wid.clone(), llm, tools, memory);
 
                 let subtask = Task::new(
@@ -258,6 +274,7 @@ mod tests {
             inbound_tx: in_tx,
             origin: std::sync::Mutex::new(("cli".into(), "test".into())),
             worker_count: AtomicU32::new(0),
+            provider_policy: None,
         };
 
         assert_eq!(tool.worker_count.load(Ordering::SeqCst), 0);

@@ -298,11 +298,20 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert_eq!(filtered.len(), all_count - 2);
 
-        // Tools still exist in registry (can be executed directly)
+        // Allowed tools can still be executed
         let result = registry
             .execute("read_file", &serde_json::json!({"path": "test.rs"}))
             .await
             .unwrap();
         assert!(result.success);
+
+        // Denied tools are blocked at execution time too
+        match registry.execute("diff_edit", &serde_json::json!({})).await {
+            Err(e) => assert!(e.to_string().contains("denied by provider policy")),
+            Ok(_) => panic!("should be denied by provider policy"),
+        }
+
+        // Tools still registered internally (len unchanged)
+        assert_eq!(registry.len(), all_count);
     }
 }

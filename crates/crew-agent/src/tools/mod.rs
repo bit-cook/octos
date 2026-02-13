@@ -110,11 +110,10 @@ impl ToolRegistry {
         self.retain(|name| policy.is_allowed(name));
     }
 
-    /// Set a provider-specific policy that filters `specs()` output.
+    /// Set a provider-specific policy that filters `specs()` and `execute()`.
     ///
-    /// Unlike `apply_policy` which permanently removes tools, this only hides
-    /// tools from the LLM. Tools remain registered and can still be executed
-    /// (e.g. by subagents using a different provider).
+    /// Unlike `apply_policy` which permanently removes tools from the registry,
+    /// this keeps tools registered but blocks both spec visibility and execution.
     pub fn set_provider_policy(&mut self, policy: ToolPolicy) {
         if policy.is_empty() {
             return;
@@ -122,8 +121,23 @@ impl ToolRegistry {
         self.provider_policy = Some(policy);
     }
 
+    /// Return the current provider policy (if any), so callers like SpawnTool
+    /// can propagate it to subagent registries.
+    pub fn provider_policy(&self) -> Option<&ToolPolicy> {
+        self.provider_policy.as_ref()
+    }
+
     /// Execute a tool by name.
+    ///
+    /// Respects provider policy: tools hidden from `specs()` are also blocked
+    /// from execution. This prevents an LLM from calling tools it shouldn't
+    /// have access to.
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> Result<ToolResult> {
+        if let Some(ref policy) = self.provider_policy {
+            if !policy.is_allowed(name) {
+                eyre::bail!("tool '{}' denied by provider policy", name);
+            }
+        }
         let tool = self
             .tools
             .get(name)

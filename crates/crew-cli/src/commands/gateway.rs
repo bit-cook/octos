@@ -332,13 +332,11 @@ impl GatewayCommand {
         let message_tool = Arc::new(MessageTool::new(out_tx));
         tools.register_arc(message_tool.clone() as Arc<dyn crew_agent::Tool>);
 
-        // Spawn tool (background subagents)
-        let spawn_tool = Arc::new(SpawnTool::new(
-            llm.clone(),
-            memory.clone(),
-            cwd.clone(),
-            spawn_inbound_tx,
-        ));
+        // Spawn tool (background subagents, inherits provider policy)
+        let spawn_tool = Arc::new(
+            SpawnTool::new(llm.clone(), memory.clone(), cwd.clone(), spawn_inbound_tx)
+                .with_provider_policy(tools.provider_policy().cloned()),
+        );
         tools.register_arc(spawn_tool.clone() as Arc<dyn crew_agent::Tool>);
 
         // Build enhanced system prompt
