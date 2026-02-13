@@ -81,6 +81,26 @@ impl HybridIndex {
         }
     }
 
+    /// Add an embedding to an existing document (by episode_id).
+    /// Returns false if the episode_id is not found.
+    pub fn add_embedding(&mut self, episode_id: &str, embedding: &[f32]) -> bool {
+        let Some(doc_idx) = self.ids.iter().position(|id| id == episode_id) else {
+            return false;
+        };
+
+        if self.has_embedding[doc_idx] {
+            return true; // already has one
+        }
+
+        self.has_embedding[doc_idx] = true;
+        let normalized = l2_normalize(embedding);
+        let hnsw = self.hnsw.get_or_insert_with(|| {
+            Hnsw::new(16, 10000, 16, 200, DistCosine)
+        });
+        hnsw.insert((&normalized, doc_idx));
+        true
+    }
+
     /// Search the index, returning (episode_id, score) pairs sorted by descending score.
     pub fn search(
         &self,

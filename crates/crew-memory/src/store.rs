@@ -5,7 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use eyre::{Result, WrapErr};
 use redb::{Database, ReadableTable, TableDefinition};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::episode::Episode;
 use crate::hybrid_search::HybridIndex;
@@ -123,8 +123,9 @@ impl EpisodeStore {
         .await??;
 
         // Update in-memory hybrid index (text only, no embedding yet)
-        if let Ok(mut idx) = self.index.write() {
-            idx.insert(&episode_id_for_index, &summary, None);
+        match self.index.write() {
+            Ok(mut idx) => idx.insert(&episode_id_for_index, &summary, None),
+            Err(e) => warn!("index write lock poisoned, skipping update: {e}"),
         }
 
         Ok(())
@@ -255,13 +256,12 @@ impl EpisodeStore {
         })
         .await??;
 
-        // Update in-memory index: re-insert with embedding.
-        // We need the summary text too, so read it from the index's stored data.
-        // For simplicity, fetch from DB.
-        if let Ok(Some(episode)) = self.get(episode_id).await {
-            if let Ok(mut idx) = self.index.write() {
-                idx.insert(episode_id, &episode.summary, Some(&embedding));
+        // Attach embedding to the existing in-memory index entry.
+        match self.index.write() {
+            Ok(mut idx) => {
+                idx.add_embedding(episode_id, &embedding);
             }
+            Err(e) => warn!("index write lock poisoned, skipping embedding update: {e}"),
         }
 
         Ok(())
