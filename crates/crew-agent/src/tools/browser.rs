@@ -242,8 +242,14 @@ impl BrowserSession {
         .await
         .map_err(|_| eyre::eyre!("Chrome startup timeout ({}s)", CHROME_STARTUP_TIMEOUT.as_secs()))??;
 
-        // Drop the lines reader so stderr isn't held
-        drop(lines);
+        // Drain stderr in background to prevent pipe buffer fill blocking Chrome
+        let stderr_inner = lines.into_inner().into_inner();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            use tokio::io::AsyncReadExt;
+            let mut reader = stderr_inner;
+            while reader.read(&mut buf).await.unwrap_or(0) > 0 {}
+        });
 
         // The stderr URL is the *browser* endpoint. We need a *page* endpoint.
         // Extract port and query /json to find the page target's WS URL.
@@ -296,6 +302,7 @@ impl BrowserSession {
     async fn shutdown(&mut self) {
         let _ = self.client.send("Browser.close", json!({})).await;
         let _ = self.process.kill().await;
+        let _ = self.process.wait().await; // Reap to prevent zombie
     }
 }
 
@@ -461,6 +468,22 @@ impl Tool for BrowserTool {
         let input: Input =
             serde_json::from_value(args.clone()).wrap_err("invalid browser tool input")?;
 
+        // Validate action before launching Chrome
+        const VALID_ACTIONS: &[&str] = &[
+            "navigate", "get_text", "get_html", "click", "type", "screenshot", "evaluate", "close",
+        ];
+        if !VALID_ACTIONS.contains(&input.action.as_str()) {
+            return Ok(ToolResult {
+                output: format!(
+                    "Unknown action: {}. Valid: {}",
+                    input.action,
+                    VALID_ACTIONS.join(", ")
+                ),
+                success: false,
+                ..Default::default()
+            });
+        }
+
         // Close action doesn't need a session
         if input.action == "close" {
             let mut guard = self.session.lock().await;
@@ -497,9 +520,21 @@ impl Tool for BrowserTool {
                         });
                     }
                 };
-                if !url.starts_with("http://") && !url.starts_with("https://") {
+                // Reject non-http(s) schemes (file://, data:, javascript:, etc.)
+                let parsed_url = match reqwest::Url::parse(url) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        return Ok(ToolResult {
+                            output: "Invalid URL".to_string(),
+                            success: false,
+                            ..Default::default()
+                        });
+                    }
+                };
+                let scheme = parsed_url.scheme();
+                if scheme != "http" && scheme != "https" {
                     return Ok(ToolResult {
-                        output: "URL must start with http:// or https://".to_string(),
+                        output: format!("Only http:// and https:// URLs are allowed, got {scheme}://"),
                         success: false,
                         ..Default::default()
                     });
@@ -531,7 +566,7 @@ impl Tool for BrowserTool {
                     .client
                     .send(
                         "Runtime.evaluate",
-                        json!({ "expression": "document.body.innerText", "returnByValue": true }),
+                        json!({ "expression": "document.body.innerText", "returnByValue": true, "timeout": 10000 }),
                     )
                     .await?;
                 let mut text = result
@@ -551,7 +586,7 @@ impl Tool for BrowserTool {
                     .client
                     .send(
                         "Runtime.evaluate",
-                        json!({ "expression": "document.documentElement.outerHTML", "returnByValue": true }),
+                        json!({ "expression": "document.documentElement.outerHTML", "returnByValue": true, "timeout": 10000 }),
                     )
                     .await?;
                 let mut html = result
@@ -585,7 +620,7 @@ impl Tool for BrowserTool {
                     .client
                     .send(
                         "Runtime.evaluate",
-                        json!({ "expression": js, "returnByValue": true }),
+                        json!({ "expression": js, "returnByValue": true, "timeout": 10000 }),
                     )
                     .await?;
                 let val = result
@@ -629,7 +664,7 @@ impl Tool for BrowserTool {
                     .client
                     .send(
                         "Runtime.evaluate",
-                        json!({ "expression": js, "returnByValue": true }),
+                        json!({ "expression": js, "returnByValue": true, "timeout": 10000 }),
                     )
                     .await?;
                 let val = result
@@ -662,16 +697,17 @@ impl Tool for BrowserTool {
                 let bytes = base64::engine::general_purpose::STANDARD
                     .decode(data_b64)
                     .wrap_err("invalid base64 from screenshot")?;
-                let tmp = std::env::temp_dir().join(format!(
-                    "crew-screenshot-{}.png",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis()
-                ));
-                tokio::fs::write(&tmp, &bytes).await.wrap_err("failed to write screenshot")?;
+                let tmp = tempfile::Builder::new()
+                    .prefix("crew-screenshot-")
+                    .suffix(".png")
+                    .tempfile()
+                    .wrap_err("failed to create screenshot temp file")?;
+                let path = tmp.path().to_path_buf();
+                tokio::fs::write(&path, &bytes).await.wrap_err("failed to write screenshot")?;
+                // Keep the file on disk (don't auto-delete on drop)
+                tmp.keep().map_err(|e| eyre::eyre!("failed to persist screenshot: {}", e.error))?;
                 Ok(ToolResult {
-                    output: format!("Screenshot saved to {}", tmp.display()),
+                    output: format!("Screenshot saved to {}", path.display()),
                     success: true,
                     ..Default::default()
                 })
@@ -691,7 +727,7 @@ impl Tool for BrowserTool {
                     .client
                     .send(
                         "Runtime.evaluate",
-                        json!({ "expression": expr, "returnByValue": true }),
+                        json!({ "expression": expr, "returnByValue": true, "timeout": 10000 }),
                     )
                     .await?;
                 let exception = result.get("exceptionDetails");
@@ -727,11 +763,8 @@ impl Tool for BrowserTool {
                     ..Default::default()
                 })
             }
-            other => Ok(ToolResult {
-                output: format!("Unknown action: {other}. Valid: navigate, get_text, get_html, click, type, screenshot, evaluate, close"),
-                success: false,
-                ..Default::default()
-            }),
+            // VALID_ACTIONS check above ensures we never reach here
+            _ => unreachable!(),
         }
     }
 }
@@ -806,6 +839,39 @@ mod tests {
             .unwrap();
         // Either fails at missing URL or at Chrome launch - both are acceptable
         assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_navigate_rejects_file_scheme() {
+        let tool = BrowserTool::new();
+        let result = tool
+            .execute(&json!({ "action": "navigate", "url": "file:///etc/passwd" }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("Only http://"));
+    }
+
+    #[tokio::test]
+    async fn test_navigate_rejects_javascript_scheme() {
+        let tool = BrowserTool::new();
+        let result = tool
+            .execute(&json!({ "action": "navigate", "url": "javascript:alert(1)" }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("Only http://"));
+    }
+
+    #[tokio::test]
+    async fn test_unknown_action_rejected_early() {
+        let tool = BrowserTool::new();
+        let result = tool
+            .execute(&json!({ "action": "invalid_action" }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.output.contains("Unknown action"));
     }
 
     #[test]
