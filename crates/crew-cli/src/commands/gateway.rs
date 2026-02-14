@@ -583,12 +583,16 @@ impl GatewayCommand {
         // Wrap agent in Arc for sharing across spawned tasks
         let agent = Arc::new(agent);
 
-        // Per-session locks to serialize messages within the same session
+        // Per-session locks to serialize messages within the same session.
+        // Pruned periodically to prevent unbounded growth.
         let session_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
 
         // Semaphore to bound concurrent session processing
         let concurrency_semaphore = Arc::new(Semaphore::new(gw_config.max_concurrent_sessions));
+
+        // Track monitoring JoinHandles so we can await them on shutdown
+        let mut monitor_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
 
         // Shared max_history behind Arc<Mutex<>> for hot-reload
         let max_history = Arc::new(std::sync::atomic::AtomicUsize::new(max_history));
@@ -718,6 +722,7 @@ impl GatewayCommand {
             let collect_inbound_tx = collect_inbound_tx.clone();
 
             let session_key_str = session_key.to_string();
+            let locks_for_prune = session_locks.clone();
             let handle = tokio::spawn(async move {
                 // Acquire concurrency permit (blocks if at max)
                 let _permit = match semaphore.acquire().await {
@@ -760,9 +765,9 @@ impl GatewayCommand {
                 .await;
             });
 
-            // Monitor spawned task for panics
+            // Monitor spawned task for panics; prune session lock after completion
             let session_key_for_log = session_key_str;
-            tokio::spawn(async move {
+            let mh = tokio::spawn(async move {
                 if let Err(e) = handle.await {
                     tracing::error!(
                         session = %session_key_for_log,
@@ -770,7 +775,26 @@ impl GatewayCommand {
                         "session task panicked"
                     );
                 }
+                // Prune session lock if no other task holds a reference
+                let mut locks = locks_for_prune.lock().await;
+                if let Some(lock) = locks.get(&session_key_for_log) {
+                    // Arc::strong_count == 1 means only the HashMap holds it
+                    if Arc::strong_count(lock) == 1 {
+                        locks.remove(&session_key_for_log);
+                    }
+                }
             });
+            monitor_handles.push(mh);
+
+            // Periodically clean up completed monitor handles to avoid Vec growth
+            if monitor_handles.len() > 100 {
+                monitor_handles.retain(|h| !h.is_finished());
+            }
+        }
+
+        // Wait for all in-flight tasks to complete before shutdown
+        for h in monitor_handles {
+            let _ = h.await;
         }
 
         heartbeat_service.stop().await;

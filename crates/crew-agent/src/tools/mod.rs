@@ -168,14 +168,16 @@ impl ToolRegistry {
             }
         }
 
-        // Reject oversized arguments (1 MB limit)
+        // Reject oversized arguments (1 MB limit).
+        // Use a counting writer to avoid allocating the full serialized string,
+        // which could OOM on deeply nested JSON before the check triggers.
         const MAX_ARGS_SIZE: usize = 1_048_576;
-        let args_str = args.to_string();
-        if args_str.len() > MAX_ARGS_SIZE {
+        let args_size = estimate_json_size(args);
+        if args_size > MAX_ARGS_SIZE {
             eyre::bail!(
-                "tool '{}' arguments too large: {} bytes (max {})",
+                "tool '{}' arguments too large: ~{} bytes (max {})",
                 name,
-                args_str.len(),
+                args_size,
                 MAX_ARGS_SIZE
             );
         }
@@ -240,6 +242,24 @@ pub use code_structure::CodeStructureTool;
 use std::path::{Component, Path};
 
 use crate::sandbox::{NoSandbox, Sandbox};
+
+/// Estimate the serialized JSON size without allocating.
+/// Walks the serde_json::Value tree recursively, counting bytes.
+fn estimate_json_size(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null => 4,
+        serde_json::Value::Bool(b) => if *b { 4 } else { 5 },
+        serde_json::Value::Number(n) => n.to_string().len(),
+        serde_json::Value::String(s) => s.len() + 2, // quotes
+        serde_json::Value::Array(arr) => {
+            2 + arr.iter().map(estimate_json_size).sum::<usize>() + arr.len().saturating_sub(1) // commas
+        }
+        serde_json::Value::Object(obj) => {
+            2 + obj.iter().map(|(k, v)| k.len() + 3 + estimate_json_size(v)).sum::<usize>()
+                + obj.len().saturating_sub(1) // commas
+        }
+    }
+}
 
 /// Resolve a user-provided path, ensuring it stays within base_dir.
 ///

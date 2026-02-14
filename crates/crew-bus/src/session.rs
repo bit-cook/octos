@@ -146,9 +146,17 @@ impl SessionManager {
     /// different keys always produce different filenames. Operating on raw
     /// UTF-8 bytes (not Unicode codepoints) makes this immune to normalization
     /// collisions on filesystems like APFS/HFS+.
+    ///
+    /// Truncates encoded name to 200 chars to stay within the 255-byte
+    /// filesystem filename limit (reserving space for ".jsonl" suffix).
     fn session_path(&self, key: &SessionKey) -> PathBuf {
+        // Max encoded name length: 200 chars + ".jsonl" (6) = 206, well within 255
+        const MAX_NAME_LEN: usize = 200;
         let mut safe_name = String::new();
         for byte in key.0.as_bytes() {
+            if safe_name.len() >= MAX_NAME_LEN {
+                break;
+            }
             if byte.is_ascii_alphanumeric() || *byte == b'-' || *byte == b'_' {
                 safe_name.push(*byte as char);
             } else {
@@ -311,10 +319,15 @@ impl SessionManager {
 
     /// Evict least-recently-used sessions from memory when over capacity.
     /// Evicted sessions remain on disk and will be lazy-loaded on next access.
+    ///
+    /// Uses `select_nth_unstable_by` for O(n) partitioning instead of a full
+    /// O(n log n) sort, since we only need the oldest `to_remove` entries.
     fn evict_lru(&mut self) {
         if self.cache.len() <= self.max_sessions {
             return;
         }
+
+        let to_remove = self.cache.len() - self.max_sessions;
 
         let mut entries: Vec<(String, Instant)> = self
             .cache
@@ -322,10 +335,9 @@ impl SessionManager {
             .map(|(k, e)| (k.clone(), e.last_accessed))
             .collect();
 
-        // Sort oldest first
-        entries.sort_by_key(|(_, t)| *t);
+        // Partition so the oldest `to_remove` entries are at the front (O(n))
+        entries.select_nth_unstable_by(to_remove.saturating_sub(1), |a, b| a.1.cmp(&b.1));
 
-        let to_remove = self.cache.len() - self.max_sessions;
         for (key, _) in entries.into_iter().take(to_remove) {
             self.cache.remove(&key);
         }

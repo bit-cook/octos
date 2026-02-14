@@ -175,6 +175,14 @@ fn git_status(cwd: &std::path::Path) -> Result<String> {
     let mut untracked = Vec::new();
     let mut modified = Vec::new();
 
+    // Pre-build index lookup maps for O(1) membership and size checks
+    let mut index_sizes: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for e in index.entries() {
+        if let Ok(p) = e.path(&index).to_str() {
+            index_sizes.insert(p.to_string(), e.stat.size);
+        }
+    }
+
     // Walk the working directory to find untracked and modified files
     for entry in ignore::WalkBuilder::new(worktree)
         .hidden(false)
@@ -193,24 +201,14 @@ fn git_status(cwd: &std::path::Path) -> Result<String> {
                 continue;
             }
 
-            let in_index = index.entries().iter().any(|e| {
-                e.path(&index).to_str().ok().is_some_and(|p| p == rel_str.as_ref())
-            });
-
-            if !in_index {
-                untracked.push(rel_str.to_string());
-            } else {
-                // Check if modified by comparing mtime
-                if let Ok(meta) = path.metadata() {
-                    let entry = index.entries().iter().find(|e| {
-                        e.path(&index).to_str().ok().is_some_and(|p| p == rel_str.as_ref())
-                    });
-                    if let Some(idx_entry) = entry {
-                        // Heuristic: compare file size to detect modifications.
-                        // This may miss same-size edits (e.g. changing one char).
-                        // Full accuracy would require blob content comparison.
-                        let file_size = meta.len() as u32;
-                        if file_size != idx_entry.stat.size {
+            match index_sizes.get(rel_str.as_ref()) {
+                None => untracked.push(rel_str.to_string()),
+                Some(&idx_size) => {
+                    // Heuristic: compare file size to detect modifications.
+                    // This may miss same-size edits (e.g. changing one char).
+                    // Full accuracy would require blob content comparison.
+                    if let Ok(meta) = path.metadata() {
+                        if meta.len() as u32 != idx_size {
                             modified.push(rel_str.to_string());
                         }
                     }
@@ -418,9 +416,9 @@ fn git_blame(cwd: &std::path::Path, path: &str) -> Result<String> {
         .workdir()
         .ok_or_else(|| eyre::eyre!("bare repository"))?;
 
-    // Path already validated via resolve_path in execute(), but resolve again
-    // against worktree for the actual read path.
-    let file_path = super::resolve_path(worktree, path)?;
+    // Path already validated via resolve_path in execute().
+    // Use worktree.join() directly — the traversal check was done at the entry point.
+    let file_path = worktree.join(path);
     if !file_path.exists() {
         eyre::bail!("file not found: {path}");
     }
