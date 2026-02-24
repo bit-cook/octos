@@ -404,3 +404,107 @@ pub(crate) fn parse_openai_sse_events(event: &SseEvent) -> Vec<StreamEvent> {
 
     events
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ChatConfig;
+    use crate::provider::LlmProvider;
+    use crew_core::{Message, MessageRole};
+
+    fn msg(content: &str) -> Message {
+        Message {
+            role: MessageRole::User,
+            content: content.to_string(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Real API test: NVIDIA NIM with Llama 3.3 70B.
+    /// Run with: NVIDIA_API_KEY=... cargo test -p crew-llm -- --ignored test_nvidia_nim_llama
+    #[tokio::test]
+    #[ignore]
+    async fn test_nvidia_nim_llama() {
+        let api_key = std::env::var("NVIDIA_API_KEY").expect("NVIDIA_API_KEY must be set");
+        let provider = OpenAIProvider::new(&api_key, "meta/llama-3.3-70b-instruct")
+            .with_base_url("https://integrate.api.nvidia.com/v1");
+
+        assert_eq!(provider.model_id(), "meta/llama-3.3-70b-instruct");
+
+        let messages = vec![msg("What is 2+2? Reply with just the number.")];
+        let config = ChatConfig {
+            max_tokens: Some(64),
+            ..Default::default()
+        };
+        let response = provider.chat(&messages, &[], &config).await.unwrap();
+
+        eprintln!("NVIDIA Llama response: {:?}", response.content);
+        eprintln!("Tokens: {:?}", response.usage);
+
+        assert!(response.content.is_some());
+        let content = response.content.unwrap();
+        assert!(content.contains('4'), "Expected '4' in response: {content}");
+        assert!(response.usage.input_tokens > 0);
+        assert!(response.usage.output_tokens > 0);
+    }
+
+    /// Real API test: NVIDIA NIM with Mistral Small.
+    /// Run with: NVIDIA_API_KEY=... cargo test -p crew-llm -- --ignored test_nvidia_nim_mistral
+    #[tokio::test]
+    #[ignore]
+    async fn test_nvidia_nim_mistral() {
+        let api_key = std::env::var("NVIDIA_API_KEY").expect("NVIDIA_API_KEY must be set");
+        let provider =
+            OpenAIProvider::new(&api_key, "mistralai/mistral-small-3.1-24b-instruct-2503")
+                .with_base_url("https://integrate.api.nvidia.com/v1");
+
+        let messages = vec![msg("Name the capital of France in one word.")];
+        let config = ChatConfig {
+            max_tokens: Some(32),
+            ..Default::default()
+        };
+        let response = provider.chat(&messages, &[], &config).await.unwrap();
+
+        eprintln!("NVIDIA Mistral response: {:?}", response.content);
+        let content = response.content.unwrap();
+        assert!(
+            content.to_lowercase().contains("paris"),
+            "Expected 'Paris' in response: {content}"
+        );
+    }
+
+    /// Real API test: NVIDIA NIM streaming.
+    /// Run with: NVIDIA_API_KEY=... cargo test -p crew-llm -- --ignored test_nvidia_nim_streaming
+    #[tokio::test]
+    #[ignore]
+    async fn test_nvidia_nim_streaming() {
+        let api_key = std::env::var("NVIDIA_API_KEY").expect("NVIDIA_API_KEY must be set");
+        let provider = OpenAIProvider::new(&api_key, "meta/llama-3.3-70b-instruct")
+            .with_base_url("https://integrate.api.nvidia.com/v1");
+
+        let messages = vec![msg("Count from 1 to 5, one number per line.")];
+        let config = ChatConfig {
+            max_tokens: Some(64),
+            ..Default::default()
+        };
+        let mut stream = provider.chat_stream(&messages, &[], &config).await.unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(event) = stream.next().await {
+            match event {
+                StreamEvent::TextDelta(text) => chunks.push(text),
+                StreamEvent::Done(_) => break,
+                _ => {}
+            }
+        }
+
+        let full_text = chunks.join("");
+        eprintln!("NVIDIA streaming result: {full_text}");
+        assert!(!full_text.is_empty(), "Stream should produce text");
+        assert!(full_text.contains('1'), "Should contain '1': {full_text}");
+        assert!(full_text.contains('5'), "Should contain '5': {full_text}");
+    }
+}

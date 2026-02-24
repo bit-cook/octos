@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use crew_core::{AgentId, InboundMessage, Task, TaskContext, TaskKind};
-use crew_llm::LlmProvider;
+use crew_llm::{ContextWindowOverride, LlmProvider, ProviderRouter};
 use crew_memory::EpisodeStore;
 use eyre::{Result, WrapErr};
 use serde::Deserialize;
@@ -25,6 +25,8 @@ pub struct SpawnTool {
     worker_count: AtomicU32,
     /// Inherited provider policy applied to subagent registries.
     provider_policy: Option<ToolPolicy>,
+    /// Optional router for resolving prefixed model IDs to sub-providers.
+    provider_router: Option<Arc<ProviderRouter>>,
 }
 
 impl SpawnTool {
@@ -42,6 +44,7 @@ impl SpawnTool {
             origin: std::sync::Mutex::new(("cli".into(), "default".into())),
             worker_count: AtomicU32::new(0),
             provider_policy: None,
+            provider_router: None,
         }
     }
 
@@ -49,6 +52,51 @@ impl SpawnTool {
     pub fn with_provider_policy(mut self, policy: Option<ToolPolicy>) -> Self {
         self.provider_policy = policy;
         self
+    }
+
+    /// Set a provider router for multi-model sub-agent support.
+    pub fn with_provider_router(mut self, router: Arc<ProviderRouter>) -> Self {
+        self.provider_router = Some(router);
+        self
+    }
+
+    /// Resolve the LLM provider for a sub-agent based on optional model and context_window.
+    ///
+    /// Context window priority: LLM-specified > config default > model native.
+    fn resolve_sub_provider(
+        &self,
+        model: Option<&str>,
+        context_window: Option<u32>,
+    ) -> Result<Arc<dyn LlmProvider>> {
+        let (base, default_cw): (Arc<dyn LlmProvider>, Option<u32>) =
+            match (model, &self.provider_router) {
+                (Some(model_key), Some(router)) => {
+                    let provider = router.resolve(model_key)?;
+                    // Look up default_context_window from metadata
+                    let key = model_key.split_once('/').map_or(model_key, |(k, _)| k);
+                    let default_cw = router
+                        .list_models_with_meta()
+                        .iter()
+                        .find(|m| m.key == key)
+                        .and_then(|m| m.default_context_window);
+                    (provider, default_cw)
+                }
+                (Some(model_key), None) => {
+                    warn!(
+                        model = model_key,
+                        "model specified but no provider router configured; using parent provider"
+                    );
+                    (self.llm.clone(), None)
+                }
+                _ => (self.llm.clone(), None),
+            };
+
+        // LLM-specified context_window takes priority, then config default
+        let effective_cw = context_window.or(default_cw);
+        match effective_cw {
+            Some(cw) => Ok(Arc::new(ContextWindowOverride::new(base, cw))),
+            None => Ok(base),
+        }
     }
 
     /// Update the origin context for result delivery (called per inbound message).
@@ -72,6 +120,15 @@ struct Input {
     /// Extra context injected as a system-level prefix.
     #[serde(default)]
     context: Option<String>,
+    /// Prefixed model ID (e.g. "anthropic/claude-haiku") to use a different provider.
+    #[serde(default)]
+    model: Option<String>,
+    /// Override context window size (tokens) for the sub-agent.
+    #[serde(default)]
+    context_window: Option<u32>,
+    /// Custom system prompt for the sub-agent (replaces default worker prompt).
+    #[serde(default)]
+    system_prompt: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -93,6 +150,52 @@ impl Tool for SpawnTool {
     }
 
     fn input_schema(&self) -> serde_json::Value {
+        // Build dynamic model field based on available sub-providers
+        let model_prop = match &self.provider_router {
+            Some(router) => {
+                let models = router.list_models_with_meta();
+                if models.is_empty() {
+                    serde_json::json!({
+                        "type": "string",
+                        "description": "Prefixed model ID for the subagent. No sub-providers currently configured."
+                    })
+                } else {
+                    let mut desc_parts =
+                        vec!["Model key for the subagent. Available models:".to_string()];
+                    let mut enum_vals = Vec::new();
+                    for m in &models {
+                        let mut line =
+                            format!("- '{}': {} ({})", m.key, m.model_id, m.provider_name);
+                        if let Some(ref cost) = m.cost_info {
+                            line.push_str(&format!(", {cost}"));
+                        }
+                        line.push_str(&format!(", {}k max ctx", m.context_window / 1000));
+                        if let Some(default_cw) = m.default_context_window {
+                            line.push_str(&format!(", {}k default budget", default_cw / 1000));
+                        }
+                        if let Some(ref desc) = m.description {
+                            line.push_str(&format!(". {desc}"));
+                        }
+                        desc_parts.push(line);
+                        enum_vals.push(serde_json::Value::String(m.key.clone()));
+                        enum_vals.push(serde_json::Value::String(format!(
+                            "{}/{}",
+                            m.key, m.model_id
+                        )));
+                    }
+                    serde_json::json!({
+                        "type": "string",
+                        "description": desc_parts.join("\n"),
+                        "enum": enum_vals
+                    })
+                }
+            }
+            None => serde_json::json!({
+                "type": "string",
+                "description": "Prefixed model ID for the subagent (e.g. 'anthropic/claude-haiku'). Requires a provider router."
+            }),
+        };
+
         serde_json::json!({
             "type": "object",
             "properties": {
@@ -118,6 +221,15 @@ impl Tool for SpawnTool {
                 "context": {
                     "type": "string",
                     "description": "Extra context prepended to the task prompt."
+                },
+                "model": model_prop,
+                "context_window": {
+                    "type": "integer",
+                    "description": "Override the context window size (tokens) for the subagent."
+                },
+                "system_prompt": {
+                    "type": "string",
+                    "description": "Custom system prompt that defines the subagent's role and behavior. Replaces the default worker prompt. Use this to specialize the subagent (e.g. 'You are a security-focused code reviewer. Flag OWASP Top 10 issues.')."
                 }
             },
             "required": ["task"]
@@ -150,6 +262,8 @@ impl Tool for SpawnTool {
             "spawning subagent"
         );
 
+        let sub_llm = self.resolve_sub_provider(input.model.as_deref(), input.context_window)?;
+
         if is_sync {
             // Sync mode: run subagent inline and return the result directly
             let mut tools = ToolRegistry::with_builtins(&self.working_dir);
@@ -162,7 +276,10 @@ impl Tool for SpawnTool {
             if let Some(ref pp) = self.provider_policy {
                 tools.set_provider_policy(pp.clone());
             }
-            let worker = Agent::new(worker_id, self.llm.clone(), tools, self.memory.clone());
+            let mut worker = Agent::new(worker_id, sub_llm, tools, self.memory.clone());
+            if let Some(ref sp) = input.system_prompt {
+                worker = worker.with_system_prompt(sp.clone());
+            }
 
             let subtask = Task::new(
                 TaskKind::Code {
@@ -196,12 +313,13 @@ impl Tool for SpawnTool {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
-            let llm = self.llm.clone();
+            let llm = sub_llm;
             let memory = self.memory.clone();
             let working_dir = self.working_dir.clone();
             let inbound_tx = self.inbound_tx.clone();
             let wid = worker_id.clone();
             let provider_policy = self.provider_policy.clone();
+            let custom_system_prompt = input.system_prompt;
 
             tokio::spawn(async move {
                 let mut tools = ToolRegistry::with_builtins(&working_dir);
@@ -214,7 +332,10 @@ impl Tool for SpawnTool {
                 if let Some(pp) = provider_policy {
                     tools.set_provider_policy(pp);
                 }
-                let worker = Agent::new(wid.clone(), llm, tools, memory);
+                let mut worker = Agent::new(wid.clone(), llm, tools, memory);
+                if let Some(sp) = custom_system_prompt {
+                    worker = worker.with_system_prompt(sp);
+                }
 
                 let subtask = Task::new(
                     TaskKind::Code {
@@ -288,6 +409,7 @@ mod tests {
             origin: std::sync::Mutex::new(("cli".into(), "test".into())),
             worker_count: AtomicU32::new(0),
             provider_policy: None,
+            provider_router: None,
         };
 
         assert_eq!(tool.worker_count.load(Ordering::SeqCst), 0);

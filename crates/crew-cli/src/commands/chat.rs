@@ -468,6 +468,17 @@ pub(crate) fn create_provider(
             println!("{}: {}", "Model".green(), p.model_id());
             Arc::new(p)
         }
+        "nvidia" | "nim" => {
+            let api_key = config.get_api_key("nvidia")?;
+            let model_name = model.unwrap_or_else(|| "meta/llama-3.3-70b-instruct".to_string());
+            let p = OpenAIProvider::new(&api_key, &model_name).with_base_url(
+                base_url
+                    .as_deref()
+                    .unwrap_or("https://integrate.api.nvidia.com/v1"),
+            );
+            println!("{}: {}", "Model".green(), p.model_id());
+            Arc::new(p)
+        }
         "ollama" => {
             let model_name = model.unwrap_or_else(|| "llama3.2".to_string());
             let p = OpenAIProvider::new("ollama", &model_name)
@@ -490,7 +501,7 @@ pub(crate) fn create_provider(
         other => {
             eyre::bail!(
                 "unknown provider: {other}. Valid: anthropic, openai, gemini, openrouter, \
-                 deepseek, groq, moonshot, dashscope, minimax, zhipu, ollama, vllm"
+                 deepseek, groq, moonshot, dashscope, minimax, zhipu, nvidia, ollama, vllm"
             );
         }
     };

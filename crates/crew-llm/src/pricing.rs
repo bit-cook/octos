@@ -77,10 +77,128 @@ pub fn model_pricing(model_id: &str) -> Option<ModelPricing> {
     }
 
     // DeepSeek
+    if m.contains("deepseek-r1") {
+        return Some(ModelPricing {
+            input_per_million: 0.55,
+            output_per_million: 2.19,
+        });
+    }
     if m.contains("deepseek") {
         return Some(ModelPricing {
             input_per_million: 0.27,
             output_per_million: 1.10,
+        });
+    }
+
+    // Qwen
+    if m.contains("qwen3-coder") || m.contains("qwen3-235b") || m.contains("qwen3.5") {
+        return Some(ModelPricing {
+            input_per_million: 0.30,
+            output_per_million: 1.20,
+        });
+    }
+    if m.contains("qwen") {
+        return Some(ModelPricing {
+            input_per_million: 0.15,
+            output_per_million: 0.60,
+        });
+    }
+
+    // Llama (via NVIDIA NIM / Groq — pricing varies by host, using NVIDIA NIM rates)
+    if m.contains("llama-3.1-405b") || m.contains("llama-3.1-nemotron-ultra") {
+        return Some(ModelPricing {
+            input_per_million: 5.00,
+            output_per_million: 15.0,
+        });
+    }
+    if m.contains("llama-3.3-70b") || m.contains("llama-3.1-70b") || m.contains("llama-4-maverick")
+    {
+        return Some(ModelPricing {
+            input_per_million: 0.40,
+            output_per_million: 1.60,
+        });
+    }
+    if m.contains("llama-4-scout") || m.contains("llama3-70b") {
+        return Some(ModelPricing {
+            input_per_million: 0.30,
+            output_per_million: 1.20,
+        });
+    }
+    // Match "llama" but not "ollama" (local runner, no pricing)
+    if (m.contains("llama") && !m.contains("ollama")) || m.contains("meta/llama") {
+        return Some(ModelPricing {
+            input_per_million: 0.10,
+            output_per_million: 0.40,
+        });
+    }
+
+    // Mistral
+    if m.contains("mistral-large") {
+        return Some(ModelPricing {
+            input_per_million: 2.00,
+            output_per_million: 6.00,
+        });
+    }
+    if m.contains("mistral") || m.contains("mixtral") {
+        return Some(ModelPricing {
+            input_per_million: 0.20,
+            output_per_million: 0.60,
+        });
+    }
+
+    // Kimi / Moonshot
+    if m.contains("kimi-k2") || m.contains("moonshot") {
+        return Some(ModelPricing {
+            input_per_million: 0.60,
+            output_per_million: 2.40,
+        });
+    }
+    if m.contains("kimi") {
+        return Some(ModelPricing {
+            input_per_million: 0.30,
+            output_per_million: 1.20,
+        });
+    }
+
+    // MiniMax
+    if m.contains("minimax-m1") || m.contains("minimax-m2") {
+        return Some(ModelPricing {
+            input_per_million: 0.50,
+            output_per_million: 2.00,
+        });
+    }
+    if m.contains("minimax") {
+        return Some(ModelPricing {
+            input_per_million: 0.20,
+            output_per_million: 1.10,
+        });
+    }
+
+    // Zhipu GLM
+    if m.contains("glm-5") || m.contains("glm5") {
+        return Some(ModelPricing {
+            input_per_million: 0.50,
+            output_per_million: 2.00,
+        });
+    }
+    if m.contains("glm-4") || m.contains("glm4") {
+        return Some(ModelPricing {
+            input_per_million: 0.30,
+            output_per_million: 1.20,
+        });
+    }
+
+    // NVIDIA Nemotron
+    if m.contains("nemotron-super") || m.contains("nemotron-ultra") {
+        return Some(ModelPricing {
+            input_per_million: 1.50,
+            output_per_million: 5.00,
+        });
+    }
+    if m.contains("nemotron") {
+        return Some(ModelPricing {
+            input_per_million: 0.20,
+            output_per_million: 0.80,
         });
     }
 
@@ -121,6 +239,26 @@ mod tests {
     #[test]
     fn test_unknown_model_returns_none() {
         assert!(model_pricing("my-local-model").is_none());
-        assert!(model_pricing("ollama/llama3").is_none());
+        assert!(model_pricing("ollama/phi-custom").is_none());
+    }
+
+    #[test]
+    fn test_nvidia_model_pricing() {
+        // Llama models should have pricing
+        let llama = model_pricing("meta/llama-3.3-70b-instruct").unwrap();
+        assert!(llama.input_per_million > 0.0);
+
+        // Mistral models
+        let mistral = model_pricing("mistralai/mistral-small-3.1-24b-instruct-2503").unwrap();
+        assert!(mistral.input_per_million > 0.0);
+
+        // Qwen models
+        let qwen = model_pricing("qwen/qwen3-coder-480b-a35b-instruct").unwrap();
+        assert!(qwen.input_per_million > 0.0);
+
+        // DeepSeek R1 should be more expensive than base deepseek
+        let r1 = model_pricing("deepseek-ai/deepseek-r1").unwrap();
+        let base = model_pricing("deepseek-chat").unwrap();
+        assert!(r1.input_per_million > base.input_per_million);
     }
 }

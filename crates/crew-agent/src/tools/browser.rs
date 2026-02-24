@@ -1,31 +1,24 @@
-//! Browser automation tool using Chrome DevTools Protocol.
+//! Browser automation tool using chromiumoxide (Chrome DevTools Protocol).
 //!
-//! Launches headless Chrome on first use, communicates via CDP over WebSocket.
+//! Launches headless Chrome on first use via `chromiumoxide::Browser`.
 //! Feature-gated behind `browser`.
 
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use base64::Engine;
-use eyre::{Result, WrapErr, bail};
-use futures::stream::{SplitSink, SplitStream};
-use futures::{SinkExt, StreamExt};
+use chromiumoxide::Page;
+use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::page::ScreenshotParams;
+use eyre::{Result, WrapErr};
+use futures::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use tokio::io::AsyncBufReadExt;
-use tokio::net::TcpStream;
-use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::{Tool, ToolResult};
 use crate::sandbox::BLOCKED_ENV_VARS;
 
-const CHROME_STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
-const ACTION_TIMEOUT: Duration = Duration::from_secs(30);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_OUTPUT_CHARS: usize = 50_000;
 
@@ -57,293 +50,75 @@ async fn check_ssrf(url: &str) -> Option<String> {
     None
 }
 
-// --- CDP client ---
-
-type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, WsMessage>;
-type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
-
-struct CdpClient {
-    sink: WsSink,
-    stream: WsStream,
-    next_id: u32,
-}
-
-impl CdpClient {
-    async fn connect(ws_url: &str) -> Result<Self> {
-        let (ws, _) = tokio_tungstenite::connect_async(ws_url)
-            .await
-            .wrap_err("failed to connect to Chrome DevTools WebSocket")?;
-        let (sink, stream) = ws.split();
-        Ok(Self {
-            sink,
-            stream,
-            next_id: 1,
-        })
-    }
-
-    async fn send(&mut self, method: &str, params: Value) -> Result<Value> {
-        let id = self.next_id;
-        self.next_id += 1;
-        let msg = json!({ "id": id, "method": method, "params": params });
-        self.sink
-            .send(WsMessage::Text(msg.to_string().into()))
-            .await
-            .wrap_err("failed to send CDP message")?;
-
-        let deadline = Instant::now() + ACTION_TIMEOUT;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                bail!("CDP response timeout for {method}");
-            }
-            let frame = tokio::time::timeout(remaining, self.stream.next())
-                .await
-                .map_err(|_| eyre::eyre!("CDP response timeout for {method}"))?
-                .ok_or_else(|| eyre::eyre!("WebSocket closed"))??;
-
-            let text = match frame {
-                WsMessage::Text(t) => t.to_string(),
-                WsMessage::Binary(b) => String::from_utf8_lossy(&b).to_string(),
-                WsMessage::Close(_) => bail!("WebSocket closed by Chrome"),
-                _ => continue,
-            };
-            let resp: Value = serde_json::from_str(&text)?;
-            // Skip events (no "id" field)
-            if resp.get("id").and_then(|v| v.as_u64()) == Some(u64::from(id)) {
-                if let Some(err) = resp.get("error") {
-                    bail!("CDP error: {err}");
-                }
-                return Ok(resp.get("result").cloned().unwrap_or(json!({})));
-            }
-        }
-    }
-
-    /// Wait for a specific event (e.g. "Page.loadEventFired").
-    async fn wait_event(&mut self, event_name: &str, timeout: Duration) -> Result<Value> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                bail!("timeout waiting for {event_name}");
-            }
-            let frame = tokio::time::timeout(remaining, self.stream.next())
-                .await
-                .map_err(|_| eyre::eyre!("timeout waiting for {event_name}"))?
-                .ok_or_else(|| eyre::eyre!("WebSocket closed"))??;
-
-            let text = match frame {
-                WsMessage::Text(t) => t.to_string(),
-                WsMessage::Binary(b) => String::from_utf8_lossy(&b).to_string(),
-                WsMessage::Close(_) => bail!("WebSocket closed while waiting for {event_name}"),
-                _ => continue,
-            };
-            let msg: Value = serde_json::from_str(&text)?;
-            if msg.get("method").and_then(|m| m.as_str()) == Some(event_name) {
-                return Ok(msg);
-            }
-        }
-    }
-}
-
 // --- Browser session ---
 
 struct BrowserSession {
-    process: Child,
-    client: CdpClient,
+    browser: Browser,
+    page: Page,
     last_used: Instant,
+    _handler: tokio::task::JoinHandle<()>,
     _temp_dir: tempfile::TempDir,
 }
 
 impl BrowserSession {
     async fn launch() -> Result<Self> {
-        let binary = find_chrome_binary()?;
         let temp_dir = tempfile::Builder::new()
             .prefix("crew-browser-")
             .tempdir()
             .wrap_err("failed to create temp dir for Chrome")?;
 
-        let mut cmd = Command::new(&binary);
-        cmd.args([
-            "--headless=new",
-            "--remote-debugging-port=0",
-            "--no-first-run",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--disable-extensions",
-            "--disable-background-networking",
-        ]);
-        cmd.arg(format!("--user-data-dir={}", temp_dir.path().display()));
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::piped());
+        let mut builder = BrowserConfig::builder()
+            .user_data_dir(temp_dir.path())
+            .arg("--disable-dev-shm-usage")
+            .arg("--disable-extensions")
+            .arg("--disable-background-networking");
 
-        // Sanitize environment
+        // Sanitize environment: set blocked vars to empty string
         for var in BLOCKED_ENV_VARS {
-            cmd.env_remove(var);
+            builder = builder.env(*var, "");
         }
 
-        let mut child = cmd
-            .spawn()
-            .wrap_err_with(|| format!("failed to launch Chrome at {}", binary.display()))?;
+        let config = builder
+            .build()
+            .map_err(|e| eyre::eyre!("failed to build browser config: {e}"))?;
 
-        // Parse DevTools WS URL from stderr
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| eyre::eyre!("no stderr"))?;
-        let reader = tokio::io::BufReader::new(stderr);
-        let mut lines = reader.lines();
-
-        let ws_url = tokio::time::timeout(CHROME_STARTUP_TIMEOUT, async {
-            while let Some(line) = lines.next_line().await? {
-                // Line looks like: "DevTools listening on ws://127.0.0.1:PORT/devtools/browser/UUID"
-                if let Some(pos) = line.find("ws://") {
-                    return Ok::<String, eyre::Report>(line[pos..].trim().to_string());
-                }
-            }
-            bail!("Chrome exited without printing DevTools URL")
-        })
-        .await
-        .map_err(|_| {
-            eyre::eyre!(
-                "Chrome startup timeout ({}s)",
-                CHROME_STARTUP_TIMEOUT.as_secs()
-            )
-        })??;
-
-        // Drain stderr in background to prevent pipe buffer fill blocking Chrome
-        let stderr_inner = lines.into_inner().into_inner();
-        tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
-            use tokio::io::AsyncReadExt;
-            let mut reader = stderr_inner;
-            while reader.read(&mut buf).await.unwrap_or(0) > 0 {}
-        });
-
-        // The stderr URL is the *browser* endpoint. We need a *page* endpoint.
-        // Extract port and query /json to find the page target's WS URL.
-        let port = ws_url
-            .split("://")
-            .nth(1)
-            .and_then(|rest| rest.split(':').nth(1))
-            .and_then(|port_and_path| port_and_path.split('/').next())
-            .ok_or_else(|| eyre::eyre!("cannot parse port from WS URL: {ws_url}"))?;
-
-        let json_url = format!("http://127.0.0.1:{port}/json");
-        let http_client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()?;
-        let targets: Vec<Value> = http_client
-            .get(&json_url)
-            .send()
+        let (browser, mut handler) = Browser::launch(config)
             .await
-            .wrap_err("failed to query Chrome /json endpoint")?
-            .json()
+            .map_err(|e| eyre::eyre!("failed to launch Chrome: {e}"))?;
+
+        let handle = tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+        let page = browser
+            .new_page("about:blank")
             .await
-            .wrap_err("failed to parse /json response")?;
-
-        let page_ws_url = targets
-            .iter()
-            .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("page"))
-            .and_then(|t| t.get("webSocketDebuggerUrl").and_then(|v| v.as_str()))
-            .ok_or_else(|| eyre::eyre!("no page target found in Chrome /json"))?
-            .to_string();
-
-        let mut client = CdpClient::connect(&page_ws_url).await?;
-        client.send("Page.enable", json!({})).await?;
+            .map_err(|e| eyre::eyre!("failed to create page: {e}"))?;
 
         Ok(Self {
-            process: child,
-            client,
+            browser,
+            page,
             last_used: Instant::now(),
+            _handler: handle,
             _temp_dir: temp_dir,
         })
-    }
-
-    fn touch(&mut self) {
-        self.last_used = Instant::now();
     }
 
     fn is_idle(&self) -> bool {
         self.last_used.elapsed() > IDLE_TIMEOUT
     }
 
-    async fn shutdown(&mut self) {
-        let _ = self.client.send("Browser.close", json!({})).await;
-        let _ = self.process.kill().await;
-        let _ = self.process.wait().await; // Reap to prevent zombie
+    fn touch(&mut self) {
+        self.last_used = Instant::now();
+    }
+
+    async fn shutdown(mut self) {
+        let _ = self.browser.close().await;
+        self._handler.abort();
     }
 }
 
-// --- Chrome binary discovery ---
+// --- Input ---
 
-fn find_chrome_binary() -> Result<std::path::PathBuf> {
-    // Try well-known names in PATH
-    let names = [
-        "google-chrome-stable",
-        "google-chrome",
-        "chromium-browser",
-        "chromium",
-        "chrome",
-    ];
-    for name in &names {
-        if let Ok(path) = which::which(name) {
-            return Ok(path);
-        }
-    }
-
-    // Platform-specific paths
-    #[cfg(target_os = "macos")]
-    {
-        let paths = [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ];
-        for p in &paths {
-            let path = std::path::PathBuf::from(p);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let paths = [
-            "/usr/bin/google-chrome-stable",
-            "/usr/bin/google-chrome",
-            "/usr/bin/chromium-browser",
-            "/usr/bin/chromium",
-            "/snap/bin/chromium",
-        ];
-        for p in &paths {
-            let path = std::path::PathBuf::from(p);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        ];
-        for p in &paths {
-            let path = std::path::PathBuf::from(p);
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-    }
-
-    bail!("Chrome/Chromium not found. Install Chrome or set it in PATH.")
-}
-
-// --- Tool input ---
-
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct Input {
     action: String,
     #[serde(default)]
@@ -356,7 +131,7 @@ struct Input {
     expression: Option<String>,
 }
 
-// --- BrowserTool ---
+// --- Tool ---
 
 pub struct BrowserTool {
     session: Arc<Mutex<Option<BrowserSession>>>,
@@ -369,19 +144,17 @@ impl BrowserTool {
         }
     }
 
-    async fn ensure_session(
-        guard: &mut tokio::sync::MutexGuard<'_, Option<BrowserSession>>,
-    ) -> Result<()> {
-        let needs_launch = match guard.as_ref() {
-            None => true,
-            Some(s) => s.is_idle(),
-        };
-        if needs_launch {
-            if let Some(mut old) = guard.take() {
-                old.shutdown().await;
+    async fn ensure_session(guard: &mut Option<BrowserSession>) -> Result<()> {
+        if let Some(session) = guard.as_ref() {
+            if !session.is_idle() {
+                return Ok(());
             }
-            **guard = Some(BrowserSession::launch().await?);
+            // Session is idle, recycle it
+            if let Some(s) = guard.take() {
+                s.shutdown().await;
+            }
         }
+        *guard = Some(BrowserSession::launch().await?);
         Ok(())
     }
 }
@@ -400,7 +173,8 @@ impl Tool for BrowserTool {
 
     fn description(&self) -> &str {
         "Interact with web pages using a headless browser. Supports navigation, \
-         text/HTML extraction, clicking, typing, screenshots, and JS evaluation."
+         text/HTML extraction, clicking, typing, screenshots, JS evaluation, \
+         element discovery, and link extraction."
     }
 
     fn tags(&self) -> &[&str] {
@@ -413,7 +187,7 @@ impl Tool for BrowserTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["navigate", "get_text", "get_html", "click", "type", "screenshot", "evaluate", "close"],
+                    "enum": ["navigate", "get_text", "get_html", "click", "type", "screenshot", "evaluate", "find_elements", "get_links", "close"],
                     "description": "Action to perform"
                 },
                 "url": {
@@ -422,7 +196,7 @@ impl Tool for BrowserTool {
                 },
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector (for 'click' and 'type' actions)"
+                    "description": "CSS selector (for 'click', 'type', and 'find_elements' actions)"
                 },
                 "text": {
                     "type": "string",
@@ -450,6 +224,8 @@ impl Tool for BrowserTool {
             "type",
             "screenshot",
             "evaluate",
+            "find_elements",
+            "get_links",
             "close",
         ];
         if !VALID_ACTIONS.contains(&input.action.as_str()) {
@@ -467,7 +243,7 @@ impl Tool for BrowserTool {
         // Close action doesn't need a session
         if input.action == "close" {
             let mut guard = self.session.lock().await;
-            if let Some(mut session) = guard.take() {
+            if let Some(session) = guard.take() {
                 session.shutdown().await;
             }
             return Ok(ToolResult {
@@ -475,6 +251,45 @@ impl Tool for BrowserTool {
                 success: true,
                 ..Default::default()
             });
+        }
+
+        // Validate navigate parameters BEFORE launching Chrome (avoid expensive startup for bad URLs)
+        if input.action == "navigate" {
+            let url = match &input.url {
+                Some(u) => u,
+                None => {
+                    return Ok(ToolResult {
+                        output: "'url' parameter is required for navigate".to_string(),
+                        success: false,
+                        ..Default::default()
+                    });
+                }
+            };
+            let parsed_url = match reqwest::Url::parse(url) {
+                Ok(u) => u,
+                Err(_) => {
+                    return Ok(ToolResult {
+                        output: "Invalid URL".to_string(),
+                        success: false,
+                        ..Default::default()
+                    });
+                }
+            };
+            let scheme = parsed_url.scheme();
+            if scheme != "http" && scheme != "https" {
+                return Ok(ToolResult {
+                    output: format!("Only http:// and https:// URLs are allowed, got {scheme}://"),
+                    success: false,
+                    ..Default::default()
+                });
+            }
+            if let Some(msg) = check_ssrf(url).await {
+                return Ok(ToolResult {
+                    output: msg,
+                    success: false,
+                    ..Default::default()
+                });
+            }
         }
 
         let mut guard = self.session.lock().await;
@@ -490,99 +305,60 @@ impl Tool for BrowserTool {
 
         match input.action.as_str() {
             "navigate" => {
-                let url = match &input.url {
-                    Some(u) => u,
-                    None => {
-                        return Ok(ToolResult {
-                            output: "'url' parameter is required for navigate".to_string(),
-                            success: false,
+                // URL already validated above
+                let url = input.url.as_ref().unwrap();
+                match session.page.goto(url).await {
+                    Ok(_) => {
+                        // Best-effort wait for navigation
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(30),
+                            session.page.wait_for_navigation(),
+                        )
+                        .await;
+                        Ok(ToolResult {
+                            output: format!("Navigated to {url}"),
+                            success: true,
                             ..Default::default()
-                        });
+                        })
                     }
-                };
-                // Reject non-http(s) schemes (file://, data:, javascript:, etc.)
-                let parsed_url = match reqwest::Url::parse(url) {
-                    Ok(u) => u,
-                    Err(_) => {
-                        return Ok(ToolResult {
-                            output: "Invalid URL".to_string(),
-                            success: false,
-                            ..Default::default()
-                        });
-                    }
-                };
-                let scheme = parsed_url.scheme();
-                if scheme != "http" && scheme != "https" {
-                    return Ok(ToolResult {
-                        output: format!(
-                            "Only http:// and https:// URLs are allowed, got {scheme}://"
-                        ),
+                    Err(e) => Ok(ToolResult {
+                        output: format!("Navigation failed: {e}"),
                         success: false,
                         ..Default::default()
-                    });
+                    }),
                 }
-                if let Some(msg) = check_ssrf(url).await {
-                    return Ok(ToolResult {
-                        output: msg,
-                        success: false,
+            }
+            "get_text" => match session.page.evaluate("document.body.innerText").await {
+                Ok(result) => {
+                    let mut text = result.into_value::<String>().unwrap_or_default();
+                    crew_core::truncate_utf8(&mut text, MAX_OUTPUT_CHARS, "\n\n... (truncated)");
+                    Ok(ToolResult {
+                        output: text,
+                        success: true,
                         ..Default::default()
-                    });
+                    })
                 }
-                session
-                    .client
-                    .send("Page.navigate", json!({ "url": url }))
-                    .await?;
-                // Wait for page load (best-effort, 30s timeout)
-                let _ = session
-                    .client
-                    .wait_event("Page.loadEventFired", ACTION_TIMEOUT)
-                    .await;
-                Ok(ToolResult {
-                    output: format!("Navigated to {url}"),
-                    success: true,
+                Err(e) => Ok(ToolResult {
+                    output: format!("Failed to get text: {e}"),
+                    success: false,
                     ..Default::default()
-                })
-            }
-            "get_text" => {
-                let result = session
-                    .client
-                    .send(
-                        "Runtime.evaluate",
-                        json!({ "expression": "document.body.innerText", "returnByValue": true, "timeout": 10000 }),
-                    )
-                    .await?;
-                let mut text = result
-                    .pointer("/result/value")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                crew_core::truncate_utf8(&mut text, MAX_OUTPUT_CHARS, "\n\n... (truncated)");
-                Ok(ToolResult {
-                    output: text,
-                    success: true,
+                }),
+            },
+            "get_html" => match session.page.content().await {
+                Ok(mut html) => {
+                    crew_core::truncate_utf8(&mut html, MAX_OUTPUT_CHARS, "\n\n... (truncated)");
+                    Ok(ToolResult {
+                        output: html,
+                        success: true,
+                        ..Default::default()
+                    })
+                }
+                Err(e) => Ok(ToolResult {
+                    output: format!("Failed to get HTML: {e}"),
+                    success: false,
                     ..Default::default()
-                })
-            }
-            "get_html" => {
-                let result = session
-                    .client
-                    .send(
-                        "Runtime.evaluate",
-                        json!({ "expression": "document.documentElement.outerHTML", "returnByValue": true, "timeout": 10000 }),
-                    )
-                    .await?;
-                let mut html = result
-                    .pointer("/result/value")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                crew_core::truncate_utf8(&mut html, MAX_OUTPUT_CHARS, "\n\n... (truncated)");
-                Ok(ToolResult {
-                    output: html,
-                    success: true,
-                    ..Default::default()
-                })
-            }
+                }),
+            },
             "click" => {
                 let selector = match &input.selector {
                     Some(s) => s,
@@ -594,27 +370,25 @@ impl Tool for BrowserTool {
                         });
                     }
                 };
-                let js = format!(
-                    r#"(() => {{ const el = document.querySelector({sel}); if (!el) return 'ERROR: element not found'; el.click(); return 'clicked'; }})()"#,
-                    sel = serde_json::to_string(selector)?
-                );
-                let result = session
-                    .client
-                    .send(
-                        "Runtime.evaluate",
-                        json!({ "expression": js, "returnByValue": true, "timeout": 10000 }),
-                    )
-                    .await?;
-                let val = result
-                    .pointer("/result/value")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("done");
-                let success = !val.starts_with("ERROR:");
-                Ok(ToolResult {
-                    output: val.to_string(),
-                    success,
-                    ..Default::default()
-                })
+                match session.page.find_element(selector).await {
+                    Ok(element) => match element.click().await {
+                        Ok(_) => Ok(ToolResult {
+                            output: "clicked".to_string(),
+                            success: true,
+                            ..Default::default()
+                        }),
+                        Err(e) => Ok(ToolResult {
+                            output: format!("Click failed: {e}"),
+                            success: false,
+                            ..Default::default()
+                        }),
+                    },
+                    Err(_) => Ok(ToolResult {
+                        output: format!("ERROR: element not found for selector: {selector}"),
+                        success: false,
+                        ..Default::default()
+                    }),
+                }
             }
             "type" => {
                 let selector = match &input.selector {
@@ -637,62 +411,64 @@ impl Tool for BrowserTool {
                         });
                     }
                 };
-                let js = format!(
-                    r#"(() => {{ const el = document.querySelector({sel}); if (!el) return 'ERROR: element not found'; el.focus(); el.value = {val}; el.dispatchEvent(new Event('input', {{bubbles: true}})); return 'typed'; }})()"#,
-                    sel = serde_json::to_string(selector)?,
-                    val = serde_json::to_string(text)?
-                );
-                let result = session
-                    .client
-                    .send(
-                        "Runtime.evaluate",
-                        json!({ "expression": js, "returnByValue": true, "timeout": 10000 }),
-                    )
-                    .await?;
-                let val = result
-                    .pointer("/result/value")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("done");
-                let success = !val.starts_with("ERROR:");
-                Ok(ToolResult {
-                    output: val.to_string(),
-                    success,
-                    ..Default::default()
-                })
-            }
-            "screenshot" => {
-                let result = session
-                    .client
-                    .send("Page.captureScreenshot", json!({ "format": "png" }))
-                    .await?;
-                let data_b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                if data_b64.is_empty() {
-                    return Ok(ToolResult {
-                        output: "Failed to capture screenshot".to_string(),
+                match session.page.find_element(selector).await {
+                    Ok(element) => {
+                        // Click to focus, then type
+                        if let Err(e) = element.click().await {
+                            return Ok(ToolResult {
+                                output: format!("Focus failed: {e}"),
+                                success: false,
+                                ..Default::default()
+                            });
+                        }
+                        match element.type_str(text).await {
+                            Ok(_) => Ok(ToolResult {
+                                output: "typed".to_string(),
+                                success: true,
+                                ..Default::default()
+                            }),
+                            Err(e) => Ok(ToolResult {
+                                output: format!("Type failed: {e}"),
+                                success: false,
+                                ..Default::default()
+                            }),
+                        }
+                    }
+                    Err(_) => Ok(ToolResult {
+                        output: format!("ERROR: element not found for selector: {selector}"),
                         success: false,
                         ..Default::default()
-                    });
+                    }),
                 }
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(data_b64)
-                    .wrap_err("invalid base64 from screenshot")?;
-                let tmp = tempfile::Builder::new()
-                    .prefix("crew-screenshot-")
-                    .suffix(".png")
-                    .tempfile()
-                    .wrap_err("failed to create screenshot temp file")?;
-                let path = tmp.path().to_path_buf();
-                tokio::fs::write(&path, &bytes)
-                    .await
-                    .wrap_err("failed to write screenshot")?;
-                // Keep the file on disk (don't auto-delete on drop)
-                tmp.keep()
-                    .map_err(|e| eyre::eyre!("failed to persist screenshot: {}", e.error))?;
-                Ok(ToolResult {
-                    output: format!("Screenshot saved to {}", path.display()),
-                    success: true,
-                    ..Default::default()
-                })
+            }
+            "screenshot" => {
+                let params = ScreenshotParams::builder().full_page(true).build();
+                match session.page.screenshot(params).await {
+                    Ok(bytes) => {
+                        let tmp = tempfile::Builder::new()
+                            .prefix("crew-screenshot-")
+                            .suffix(".png")
+                            .tempfile()
+                            .wrap_err("failed to create screenshot temp file")?;
+                        let path = tmp.path().to_path_buf();
+                        tokio::fs::write(&path, &bytes)
+                            .await
+                            .wrap_err("failed to write screenshot")?;
+                        tmp.keep().map_err(|e| {
+                            eyre::eyre!("failed to persist screenshot: {}", e.error)
+                        })?;
+                        Ok(ToolResult {
+                            output: format!("Screenshot saved to {}", path.display()),
+                            success: true,
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        output: format!("Screenshot failed: {e}"),
+                        success: false,
+                        ..Default::default()
+                    }),
+                }
             }
             "evaluate" => {
                 let expr = match &input.expression {
@@ -705,45 +481,128 @@ impl Tool for BrowserTool {
                         });
                     }
                 };
-                let result = session
-                    .client
-                    .send(
-                        "Runtime.evaluate",
-                        json!({ "expression": expr, "returnByValue": true, "timeout": 10000 }),
-                    )
-                    .await?;
-                let exception = result.get("exceptionDetails");
-                if exception.is_some() {
-                    let msg = result
-                        .pointer("/exceptionDetails/exception/description")
-                        .or_else(|| result.pointer("/exceptionDetails/text"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("JavaScript exception");
-                    return Ok(ToolResult {
-                        output: msg.to_string(),
+                match session.page.evaluate(expr.as_str()).await {
+                    Ok(result) => {
+                        let mut output = match result.value() {
+                            Some(Value::String(s)) => s.clone(),
+                            Some(v) => v.to_string(),
+                            None => "undefined".to_string(),
+                        };
+                        crew_core::truncate_utf8(
+                            &mut output,
+                            MAX_OUTPUT_CHARS,
+                            "\n\n... (truncated)",
+                        );
+                        Ok(ToolResult {
+                            output,
+                            success: true,
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        output: format!("JavaScript error: {e}"),
                         success: false,
                         ..Default::default()
-                    });
+                    }),
                 }
-                let mut output = match result.pointer("/result/value") {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(v) => v.to_string(),
+            }
+            "find_elements" => {
+                let selector = match &input.selector {
+                    Some(s) => s,
                     None => {
-                        // No value returned (undefined, etc.)
-                        result
-                            .pointer("/result/description")
-                            .or_else(|| result.pointer("/result/type"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("undefined")
-                            .to_string()
+                        return Ok(ToolResult {
+                            output: "'selector' parameter is required for find_elements"
+                                .to_string(),
+                            success: false,
+                            ..Default::default()
+                        });
                     }
                 };
-                crew_core::truncate_utf8(&mut output, MAX_OUTPUT_CHARS, "\n\n... (truncated)");
-                Ok(ToolResult {
-                    output,
-                    success: true,
-                    ..Default::default()
-                })
+                match session.page.find_elements(selector).await {
+                    Ok(elements) => {
+                        let count = elements.len();
+                        let mut summaries = Vec::new();
+                        for (i, el) in elements.iter().take(50).enumerate() {
+                            let text = el.inner_text().await.ok().flatten().unwrap_or_default();
+                            let truncated = if text.len() > 200 {
+                                format!("{}...", &text[..200])
+                            } else {
+                                text
+                            };
+                            summaries.push(format!("[{i}] {truncated}"));
+                        }
+                        let mut output = format!("Found {count} elements matching '{selector}':\n");
+                        output.push_str(&summaries.join("\n"));
+                        if count > 50 {
+                            output.push_str(&format!("\n... and {} more", count - 50));
+                        }
+                        crew_core::truncate_utf8(
+                            &mut output,
+                            MAX_OUTPUT_CHARS,
+                            "\n\n... (truncated)",
+                        );
+                        Ok(ToolResult {
+                            output,
+                            success: true,
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        output: format!("Find elements failed: {e}"),
+                        success: false,
+                        ..Default::default()
+                    }),
+                }
+            }
+            "get_links" => {
+                // Extract all <a> href + text from the page via JS
+                let js = r#"
+                    Array.from(document.querySelectorAll('a[href]')).map(a => ({
+                        href: a.href,
+                        text: (a.innerText || '').trim().substring(0, 200)
+                    })).filter(l => l.href && !l.href.startsWith('javascript:'))
+                "#;
+                match session.page.evaluate(js).await {
+                    Ok(result) => {
+                        let mut output = match result.value() {
+                            Some(Value::Array(links)) => {
+                                let mut lines = Vec::new();
+                                lines.push(format!("Found {} links:", links.len()));
+                                for link in links.iter().take(200) {
+                                    let href =
+                                        link.get("href").and_then(|v| v.as_str()).unwrap_or("");
+                                    let text =
+                                        link.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                                    if text.is_empty() {
+                                        lines.push(format!("  - {href}"));
+                                    } else {
+                                        lines.push(format!("  - [{text}]({href})"));
+                                    }
+                                }
+                                if links.len() > 200 {
+                                    lines.push(format!("  ... and {} more", links.len() - 200));
+                                }
+                                lines.join("\n")
+                            }
+                            _ => "No links found".to_string(),
+                        };
+                        crew_core::truncate_utf8(
+                            &mut output,
+                            MAX_OUTPUT_CHARS,
+                            "\n\n... (truncated)",
+                        );
+                        Ok(ToolResult {
+                            output,
+                            success: true,
+                            ..Default::default()
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        output: format!("Get links failed: {e}"),
+                        success: false,
+                        ..Default::default()
+                    }),
+                }
             }
             // VALID_ACTIONS check above ensures we never reach here
             _ => unreachable!(),
@@ -754,12 +613,6 @@ impl Tool for BrowserTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_find_chrome_binary() {
-        // Just verify it doesn't panic; may or may not find Chrome in CI
-        let _ = find_chrome_binary();
-    }
 
     #[test]
     fn test_ssrf_private_hosts() {
@@ -799,7 +652,6 @@ mod tests {
     #[tokio::test]
     async fn test_navigate_ssrf_blocked() {
         let tool = BrowserTool::new();
-        // This should fail at SSRF check before needing Chrome
         let result = tool
             .execute(&json!({ "action": "navigate", "url": "http://127.0.0.1:9222" }))
             .await
@@ -810,13 +662,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_navigate_missing_url() {
-        // This will try to launch Chrome which may fail in CI, but we test the param validation
         let tool = BrowserTool::new();
         let result = tool
             .execute(&json!({ "action": "navigate" }))
             .await
             .unwrap();
-        // Either fails at missing URL or at Chrome launch - both are acceptable
         assert!(!result.success);
     }
 
@@ -858,5 +708,15 @@ mod tests {
         let v = json!({ "action": "invalid_action" });
         let input: Input = serde_json::from_value(v).unwrap();
         assert_eq!(input.action, "invalid_action");
+    }
+
+    #[test]
+    fn test_new_actions_in_schema() {
+        let tool = BrowserTool::new();
+        let schema = tool.input_schema();
+        let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
+        let action_strs: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(action_strs.contains(&"find_elements"));
+        assert!(action_strs.contains(&"get_links"));
     }
 }

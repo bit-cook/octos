@@ -1,6 +1,122 @@
 {
-  "provider": "openai",
-  "model": "gpt-4o",
-  "base_url": "https://your-provider.com/v1",
-  "api_key_env": "OPENAI_API_KEY"
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-20250514",
+
+  "sub_providers": [
+    {
+      "key": "cheap",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "api_key_env": "OPENAI_API_KEY",
+      "description": "Fast and cheap. Use for simple search, file ops, and lightweight tasks.",
+      "default_context_window": 16000
+    },
+    {
+      "key": "strong",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "api_key_env": "OPENAI_API_KEY",
+      "description": "Strong general-purpose model. Use for code generation and multi-step reasoning."
+    },
+    {
+      "key": "deepseek",
+      "provider": "deepseek",
+      "model": "deepseek-chat",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "description": "Cost-effective coding model. Good for code generation and technical tasks.",
+      "default_context_window": 32000
+    },
+    {
+      "key": "reasoner",
+      "provider": "deepseek",
+      "model": "deepseek-reasoner",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "description": "Deep reasoning model (chain-of-thought). Use for math, logic, and complex analysis."
+    },
+    {
+      "key": "qwen",
+      "provider": "dashscope",
+      "model": "qwen-max",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "description": "Alibaba Qwen. Strong multilingual and Chinese-language tasks."
+    },
+    {
+      "key": "qwen-fast",
+      "provider": "dashscope",
+      "model": "qwen-turbo",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "description": "Fast Qwen model. Use for quick tasks and large document processing.",
+      "default_context_window": 16000
+    },
+    {
+      "key": "nvidia-llama",
+      "provider": "nvidia",
+      "model": "meta/llama-3.3-70b-instruct",
+      "api_key_env": "NVIDIA_API_KEY",
+      "description": "Llama 3.3 70B via NVIDIA NIM. Strong open-source model for general tasks."
+    },
+    {
+      "key": "nvidia-deepseek-r1",
+      "provider": "nvidia",
+      "model": "deepseek-ai/deepseek-r1",
+      "api_key_env": "NVIDIA_API_KEY",
+      "description": "DeepSeek R1 via NVIDIA NIM. State-of-the-art reasoning for math and coding."
+    },
+    {
+      "key": "nvidia-qwen-coder",
+      "provider": "nvidia",
+      "model": "qwen/qwen3-coder-480b-a35b-instruct",
+      "api_key_env": "NVIDIA_API_KEY",
+      "description": "Qwen3 Coder 480B via NVIDIA NIM. Top-tier agentic coding model, 256k context."
+    },
+    {
+      "key": "nvidia-mistral",
+      "provider": "nvidia",
+      "model": "mistralai/mistral-small-3.1-24b-instruct-2503",
+      "api_key_env": "NVIDIA_API_KEY",
+      "description": "Mistral Small 3.1 via NVIDIA NIM. Fast multimodal model, 128k context."
+    },
+    {
+      "key": "kimi",
+      "provider": "moonshot",
+      "model": "kimi-k2.5",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "description": "Kimi K2.5 by Moonshot. Strong reasoning model with long context, good for complex analysis and agentic tasks."
+    },
+    {
+      "key": "minimax",
+      "provider": "minimax",
+      "model": "MiniMax-M1",
+      "api_key_env": "MINIMAX_API_KEY",
+      "description": "MiniMax M1 reasoning model. Strong at math, coding, and multi-step reasoning with extended thinking."
+    },
+    {
+      "key": "glm",
+      "provider": "zhipu",
+      "model": "glm-5",
+      "api_key_env": "ZHIPU_API_KEY",
+      "description": "GLM-5 by Zhipu. 744B MoE reasoning model, strong at agentic tasks and long-horizon planning."
+    },
+    {
+      "key": "qwen-reasoning",
+      "provider": "dashscope",
+      "model": "qwq-plus",
+      "api_key_env": "DASHSCOPE_API_KEY",
+      "description": "Qwen QwQ-Plus reasoning model. Deep thinking for math, logic, and complex problem-solving."
+    },
+    {
+      "key": "local",
+      "provider": "ollama",
+      "model": "qwen3:8b",
+      "description": "Qwen3 8B running locally via Ollama. Free, private, no API key needed. Good for simple tasks, drafting, and quick iteration.",
+      "default_context_window": 8000
+    },
+    {
+      "key": "local-14b",
+      "provider": "ollama",
+      "model": "qwen3:14b",
+      "description": "Qwen3 14B running locally via Ollama. Free, private, stronger reasoning than 8B. Use for code review, moderate complexity tasks.",
+      "default_context_window": 16000
+    }
+  ]
 }

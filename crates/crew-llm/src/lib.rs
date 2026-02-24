@@ -8,11 +8,13 @@
 
 mod config;
 pub mod context;
+mod context_override;
 pub mod embedding;
 mod failover;
 pub mod pricing;
 mod provider;
 mod retry;
+pub mod router;
 pub mod sse;
 mod types;
 pub mod vision;
@@ -24,9 +26,11 @@ pub mod openrouter;
 pub mod transcription;
 
 pub use config::ChatConfig;
+pub use context_override::ContextWindowOverride;
 pub use embedding::{EmbeddingProvider, OpenAIEmbedder};
 pub use failover::ProviderChain;
 pub use provider::LlmProvider;
 pub use retry::{RetryConfig, RetryProvider};
+pub use router::{ProviderRouter, SubProviderMeta};
 pub use transcription::GroqTranscriber;
 pub use types::{ChatResponse, ChatStream, StopReason, StreamEvent, TokenUsage, ToolSpec};

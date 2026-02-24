@@ -69,6 +69,11 @@ pub struct Config {
     /// tag are visible to the LLM. Example: `["code", "search"]`.
     #[serde(default)]
     pub context_filter: Vec<String>,
+
+    /// Sub-providers available for subagent spawning via the spawn tool.
+    /// Each entry registers a provider under a short key that the LLM can reference.
+    #[serde(default)]
+    pub sub_providers: Vec<SubProviderConfig>,
 }
 
 /// A fallback model for the provider failover chain.
@@ -82,6 +87,36 @@ pub struct FallbackModel {
     /// Custom base URL.
     #[serde(default)]
     pub base_url: Option<String>,
+}
+
+/// A sub-provider available for subagent spawning via the spawn tool.
+/// The LLM sees these as selectable model options with cost/capability metadata.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubProviderConfig {
+    /// Short key used to reference this provider (e.g. "cheap", "strong").
+    pub key: String,
+    /// Provider name (e.g. "openai", "anthropic", "gemini").
+    pub provider: String,
+    /// Model name (e.g. "gpt-4o-mini").
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Environment variable name holding the API key for this sub-provider.
+    /// If not set, falls back to the default for the provider (e.g. OPENAI_API_KEY).
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Custom base URL for this sub-provider.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Human-readable description of when/why to use this model.
+    /// Shown to the LLM in the spawn tool schema.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Default context window (tokens) applied when this sub-provider is selected.
+    /// If set, sub-agents using this provider get this context budget automatically
+    /// (unless the LLM explicitly overrides it). This controls how aggressively the
+    /// sub-agent trims conversation history during its tool loop.
+    #[serde(default)]
+    pub default_context_window: Option<u32>,
 }
 
 /// Embedding provider configuration.
@@ -327,6 +362,8 @@ impl Config {
                 "minimax",
                 "zhipu",
                 "glm",
+                "nvidia",
+                "nim",
                 "ollama",
                 "vllm",
             ];
@@ -427,7 +464,7 @@ fn is_valid_model_for_provider(provider: &str, model: &str) -> bool {
         "zhipu" | "glm" => m.contains("glm"),
         "minimax" => m.contains("minimax"),
         // These host many models, accept any
-        "groq" | "ollama" | "vllm" | "openrouter" => true,
+        "groq" | "nvidia" | "nim" | "ollama" | "vllm" | "openrouter" => true,
         _ => true,
     }
 }
