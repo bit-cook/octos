@@ -16,6 +16,9 @@ Thumbs.db
 .crew/tasks/
 .crew/*.redb
 
+# Node
+node_modules/
+
 # Environment
 .env
 .env.local
