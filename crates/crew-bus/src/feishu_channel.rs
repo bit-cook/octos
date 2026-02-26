@@ -1026,7 +1026,8 @@ impl FeishuChannel {
                     warn!("Feishu webhook: invalid JSON body: {e}");
                     return axum::http::Response::builder()
                         .status(400)
-                        .body("invalid json".to_string())
+                        .header("Content-Type", "application/json")
+                        .body(serde_json::json!({"error": "invalid json"}).to_string())
                         .unwrap();
                 }
             };
@@ -1052,7 +1053,8 @@ impl FeishuChannel {
                         warn!("Feishu webhook: signature mismatch");
                         return axum::http::Response::builder()
                             .status(403)
-                            .body("signature mismatch".to_string())
+                            .header("Content-Type", "application/json")
+                            .body(serde_json::json!({"error": "signature mismatch"}).to_string())
                             .unwrap();
                     }
                 }
@@ -1070,7 +1072,8 @@ impl FeishuChannel {
                                 warn!("Feishu webhook: failed to parse decrypted event: {e}");
                                 return axum::http::Response::builder()
                                     .status(400)
-                                    .body("decrypt parse error".to_string())
+                                    .header("Content-Type", "application/json")
+                                    .body(serde_json::json!({"error": "decrypt parse error"}).to_string())
                                     .unwrap();
                             }
                         },
@@ -1078,7 +1081,8 @@ impl FeishuChannel {
                             warn!("Feishu webhook: decryption failed: {e}");
                             return axum::http::Response::builder()
                                 .status(400)
-                                .body("decryption failed".to_string())
+                                .header("Content-Type", "application/json")
+                                .body(serde_json::json!({"error": "decryption failed"}).to_string())
                                 .unwrap();
                         }
                     }
@@ -1086,7 +1090,8 @@ impl FeishuChannel {
                     warn!("Feishu webhook: received encrypted event but no encrypt_key configured");
                     return axum::http::Response::builder()
                         .status(400)
-                        .body("no encrypt key".to_string())
+                        .header("Content-Type", "application/json")
+                        .body(serde_json::json!({"error": "no encrypt key configured"}).to_string())
                         .unwrap();
                 }
             } else {
@@ -1117,7 +1122,8 @@ impl FeishuChannel {
                     warn!("Feishu webhook: verification token mismatch");
                     return axum::http::Response::builder()
                         .status(403)
-                        .body("token mismatch".to_string())
+                        .header("Content-Type", "application/json")
+                        .body(serde_json::json!({"error": "token mismatch"}).to_string())
                         .unwrap();
                 }
             }
