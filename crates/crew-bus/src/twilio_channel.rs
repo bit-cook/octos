@@ -63,9 +63,7 @@ impl TwilioChannel {
 
     /// Clean a phone number for use as sender_id (strip "whatsapp:" prefix).
     fn clean_number(number: &str) -> &str {
-        number
-            .strip_prefix("whatsapp:")
-            .unwrap_or(number)
+        number.strip_prefix("whatsapp:").unwrap_or(number)
     }
 }
 
@@ -195,8 +193,7 @@ fn sha1(data: &[u8]) -> [u8; 20] {
 
 /// Base64 encode bytes.
 fn base64_encode(data: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
@@ -260,7 +257,10 @@ impl Channel for TwilioChannel {
         use axum::routing::post;
         use axum::{Form, Router};
 
-        info!(port = self.webhook_port, "Starting Twilio channel (webhook mode)");
+        info!(
+            port = self.webhook_port,
+            "Starting Twilio channel (webhook mode)"
+        );
 
         #[derive(Clone)]
         struct WebhookState {
@@ -300,7 +300,10 @@ impl Channel for TwilioChannel {
             }
 
             // Verify signature if present
-            if let Some(sig) = headers.get("X-Twilio-Signature").and_then(|v| v.to_str().ok()) {
+            if let Some(sig) = headers
+                .get("X-Twilio-Signature")
+                .and_then(|v| v.to_str().ok())
+            {
                 // We need the full URL for verification — use X-Forwarded-Proto/Host or fallback
                 let host = headers
                     .get("host")
@@ -370,9 +373,7 @@ impl Channel for TwilioChannel {
                 // Twilio media URLs require Basic Auth
                 let auth_header = format!(
                     "Basic {}",
-                    base64_encode(
-                        format!("{}:{}", "download", state.auth_token).as_bytes()
-                    )
+                    base64_encode(format!("{}:{}", "download", state.auth_token).as_bytes())
                 );
 
                 match download_media(
@@ -542,8 +543,8 @@ mod tests {
         let data = b"what do ya want for nothing?";
         let result = hmac_sha1(key, data);
         let expected: [u8; 20] = [
-            0xef, 0xfc, 0xdf, 0x6a, 0xe5, 0xeb, 0x2f, 0xa2, 0xd2, 0x74, 0x16, 0xd5, 0xf1,
-            0x84, 0xdf, 0x9c, 0x25, 0x9a, 0x7c, 0x79,
+            0xef, 0xfc, 0xdf, 0x6a, 0xe5, 0xeb, 0x2f, 0xa2, 0xd2, 0x74, 0x16, 0xd5, 0xf1, 0x84,
+            0xdf, 0x9c, 0x25, 0x9a, 0x7c, 0x79,
         ];
         assert_eq!(result, expected);
     }

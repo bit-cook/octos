@@ -368,16 +368,22 @@ fn build_openai_content(msg: &Message, model: &str) -> Option<OpenAIContent> {
 
     if images.is_empty() {
         // If media was stripped due to model not supporting vision, note it in text
-        let media_note = if model_lacks_vision(model) && msg.media.iter().any(|p| vision::is_image(p)) {
-            let filenames: Vec<_> = msg.media.iter().map(|p| {
-                std::path::Path::new(p).file_name()
-                    .map(|f| f.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.clone())
-            }).collect();
-            Some(format!("[attached media: {}]", filenames.join(", ")))
-        } else {
-            None
-        };
+        let media_note =
+            if model_lacks_vision(model) && msg.media.iter().any(|p| vision::is_image(p)) {
+                let filenames: Vec<_> = msg
+                    .media
+                    .iter()
+                    .map(|p| {
+                        std::path::Path::new(p)
+                            .file_name()
+                            .map(|f| f.to_string_lossy().to_string())
+                            .unwrap_or_else(|| p.clone())
+                    })
+                    .collect();
+                Some(format!("[attached media: {}]", filenames.join(", ")))
+            } else {
+                None
+            };
 
         if msg.content.is_empty() && media_note.is_none() {
             // Tool messages require a content string (OpenAI spec).

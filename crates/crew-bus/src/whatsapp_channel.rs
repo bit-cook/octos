@@ -156,18 +156,11 @@ impl Channel for WhatsAppChannel {
                         let mut media = Vec::new();
                         if let Some(media_arr) = msg.get("media").and_then(|v| v.as_array()) {
                             for item in media_arr {
-                                let url = item
-                                    .get("url")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let mimetype = item
-                                    .get("mimetype")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let filename = item
-                                    .get("filename")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
+                                let url = item.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                                let mimetype =
+                                    item.get("mimetype").and_then(|v| v.as_str()).unwrap_or("");
+                                let filename =
+                                    item.get("filename").and_then(|v| v.as_str()).unwrap_or("");
 
                                 if url.is_empty() {
                                     continue;
@@ -181,10 +174,17 @@ impl Channel for WhatsAppChannel {
                                 } else {
                                     ext_from_mimetype(mimetype)
                                 };
-                                let dl_name = format!("wa_{}{}", Utc::now().timestamp_millis(), ext);
+                                let dl_name =
+                                    format!("wa_{}{}", Utc::now().timestamp_millis(), ext);
 
-                                match download_media(&self.http, url, &[], &self.media_dir, &dl_name)
-                                    .await
+                                match download_media(
+                                    &self.http,
+                                    url,
+                                    &[],
+                                    &self.media_dir,
+                                    &dl_name,
+                                )
+                                .await
                                 {
                                     Ok(path) => media.push(path.display().to_string()),
                                     Err(e) => warn!("failed to download WhatsApp media: {e}"),
@@ -195,10 +195,8 @@ impl Channel for WhatsAppChannel {
                         if media.is_empty() {
                             if let Some(url) = msg.get("mediaUrl").and_then(|v| v.as_str()) {
                                 if !url.is_empty() {
-                                    let mimetype = msg
-                                        .get("mimetype")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("");
+                                    let mimetype =
+                                        msg.get("mimetype").and_then(|v| v.as_str()).unwrap_or("");
                                     let ext = ext_from_mimetype(mimetype);
                                     let dl_name =
                                         format!("wa_{}{}", Utc::now().timestamp_millis(), ext);
