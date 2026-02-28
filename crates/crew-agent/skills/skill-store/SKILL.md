@@ -1,52 +1,52 @@
 ---
 name: skill-store
 description: Browse and install community skills from the skill registry.
+always: true
 ---
 
 # Skill Store
 
-When the user asks to browse skills, install skills, find available skills, show skill store, or similar (including Chinese: 技能商店, 安装技能, 查看技能, 浏览技能):
+IMPORTANT: You MUST use the shell tool to run `crew skills search` commands. Do NOT use web search or try to look up skills online. The registry is accessed via the CLI command only.
 
-## Browse Available Skills
+When the user asks to browse skills, install skills, find available skills, show skill store, or similar (including Chinese: 技能商店, 安装技能, 查看技能, 浏览技能, 搜索技能):
 
-Run this command to show all available skill packages:
+## Step 1: Search the Registry
+
+ALWAYS run this shell command first — do NOT delegate to a subagent:
 
 ```bash
 crew skills search --cwd {{CWD}}
 ```
 
-To search for a specific skill:
+To filter by keyword (e.g. mofa, slides, video):
 
 ```bash
-crew skills search <query> --cwd {{CWD}}
+crew skills search mofa --cwd {{CWD}}
 ```
 
-Show the output to the user so they can see what's available.
+Show the command output directly to the user.
 
-## Install a Skill Package
+## Step 2: Install
 
-When the user wants to install a specific package, use the repo path from the search results:
+When the user picks a package, run:
 
 ```bash
 crew skills install <user/repo> --cwd {{CWD}}
 ```
 
-For example:
+Example:
 ```bash
-# Install all mofa skills
 crew skills install mofa-org/mofa-skills --cwd {{CWD}}
-
-# Install a single skill from a package
-crew skills install mofa-org/mofa-skills/mofa-slides --cwd {{CWD}}
 ```
 
-## Options
+Options:
+- `--force` to overwrite existing skills
+- `--branch <tag>` for a specific version
 
-- Add `--force` to overwrite existing skills
-- Add `--branch <tag>` to install a specific version (default: main)
+## Step 3: Verify
 
-## After Install
+```bash
+crew skills list --cwd {{CWD}}
+```
 
-Tell the user:
-1. Skills are installed. Run `crew skills list --cwd {{CWD}}` to verify.
-2. Check individual skill requirements (e.g. API keys) in the skill's documentation.
+Tell the user what was installed and any requirements (e.g. API keys).

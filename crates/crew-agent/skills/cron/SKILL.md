@@ -8,6 +8,10 @@ always: true
 
 Use the `cron` tool to schedule reminders and recurring tasks.
 
+## IMPORTANT: User Consent Required
+
+NEVER add, remove, enable, or disable cron jobs unless the user **explicitly** asks you to. Do NOT proactively create scheduled tasks, reminders, or recurring jobs. Only use the cron tool when the user's message clearly requests scheduling (e.g., "remind me every day at 9am", "set up a recurring check", "schedule a task"). Listing jobs is always allowed.
+
 ## Actions
 
 ### Add a recurring job

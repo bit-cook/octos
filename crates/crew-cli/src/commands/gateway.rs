@@ -1042,15 +1042,33 @@ async fn process_session_message(
             // Send response back through channel
             // Strip <think>...</think> blocks from models that embed reasoning inline
             let content = strip_think_tags(&conv_response.content);
-            let outbound = OutboundMessage {
-                channel: reply_channel.to_string(),
-                chat_id: reply_chat_id.to_string(),
-                content,
-                reply_to: None,
-                media: vec![],
-                metadata: serde_json::json!({}),
-            };
-            let _ = out_tx.send(outbound).await;
+
+            // For cron-triggered messages: suppress delivery if the agent response
+            // is empty or starts with [SILENT] (allows conditional-notify jobs).
+            let is_cron = inbound.channel == "system" && inbound.sender_id == "cron";
+            let is_silent = content.trim().is_empty()
+                || content.trim_start().starts_with("[SILENT]")
+                || content.trim_start().starts_with("[NO_CHANGE]");
+
+            if is_cron && is_silent {
+                tracing::debug!("cron job response suppressed (silent/empty)");
+            } else {
+                let display_content = content
+                    .trim_start()
+                    .strip_prefix("[SILENT]")
+                    .or_else(|| content.trim_start().strip_prefix("[NO_CHANGE]"))
+                    .unwrap_or(&content)
+                    .to_string();
+                let outbound = OutboundMessage {
+                    channel: reply_channel.to_string(),
+                    chat_id: reply_chat_id.to_string(),
+                    content: display_content,
+                    reply_to: None,
+                    media: vec![],
+                    metadata: serde_json::json!({}),
+                };
+                let _ = out_tx.send(outbound).await;
+            }
 
             // Collect mode: not applicable in concurrent processing
             // (would require access to agent_handle which stays on main task)

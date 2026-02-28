@@ -112,7 +112,7 @@ impl Tool for CronTool {
                 },
                 "job_id": {
                     "type": "string",
-                    "description": "Job ID (required for 'remove')"
+                    "description": "Job ID for 'remove' (or use 'name' to match by name)"
                 }
             },
             "required": ["action"]
@@ -257,29 +257,62 @@ impl CronTool {
     }
 
     fn handle_remove(&self, input: Input) -> ToolResult {
-        let id = match input.job_id {
-            Some(id) => id,
-            None => {
+        // Try job_id first, then fall back to name matching
+        if let Some(id) = &input.job_id {
+            if self.service.remove_job(id) {
                 return ToolResult {
-                    output: "'job_id' is required for 'remove' action.".into(),
+                    output: format!("Removed job {id}."),
+                    success: true,
+                    ..Default::default()
+                };
+            }
+            return ToolResult {
+                output: format!("Job {id} not found."),
+                success: false,
+                ..Default::default()
+            };
+        }
+
+        // Match by name (case-insensitive, partial match)
+        if let Some(name) = &input.name {
+            let query = name.to_lowercase();
+            let matching: Vec<String> = self
+                .service
+                .list_jobs()
+                .iter()
+                .filter(|j| {
+                    j.name.to_lowercase().contains(&query)
+                        || j.payload.message.to_lowercase().contains(&query)
+                })
+                .map(|j| j.id.clone())
+                .collect();
+
+            if matching.is_empty() {
+                return ToolResult {
+                    output: format!("No jobs matching '{name}'."),
                     success: false,
                     ..Default::default()
                 };
             }
-        };
 
-        if self.service.remove_job(&id) {
-            ToolResult {
-                output: format!("Removed job {id}."),
+            let mut removed = Vec::new();
+            for id in &matching {
+                if self.service.remove_job(id) {
+                    removed.push(id.clone());
+                }
+            }
+
+            return ToolResult {
+                output: format!("Removed {} job(s): {}", removed.len(), removed.join(", ")),
                 success: true,
                 ..Default::default()
-            }
-        } else {
-            ToolResult {
-                output: format!("Job {id} not found."),
-                success: false,
-                ..Default::default()
-            }
+            };
+        }
+
+        ToolResult {
+            output: "'job_id' or 'name' is required for 'remove' action.".into(),
+            success: false,
+            ..Default::default()
         }
     }
 
