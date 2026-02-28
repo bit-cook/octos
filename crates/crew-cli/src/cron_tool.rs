@@ -70,7 +70,8 @@ impl Tool for CronTool {
          When adding a job, 'channel' and 'chat_id' are auto-filled from the current \
          conversation — you do NOT need to ask the user for them. Just call add with \
          'message' and 'every_seconds' (or 'cron_expr'). \
-         Use 'every_seconds' for recurring reminders, not 'at_ms'."
+         Use 'every_seconds' for recurring reminders, not 'at_ms'. \
+         To remove jobs, use 'name' for fuzzy matching (preferred) or 'job_id' for exact match."
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -100,7 +101,7 @@ impl Tool for CronTool {
                 },
                 "name": {
                     "type": "string",
-                    "description": "Optional name for the job"
+                    "description": "Name for the job. For 'add': optional label. For 'remove': matches jobs by name (partial, case-insensitive)."
                 },
                 "channel": {
                     "type": "string",

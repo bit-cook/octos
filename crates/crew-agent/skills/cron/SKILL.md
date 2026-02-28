@@ -35,9 +35,15 @@ NEVER add, remove, enable, or disable cron jobs unless the user **explicitly** a
 ```
 
 ### Remove a job
+By exact ID:
 ```json
 {"action": "remove", "job_id": "abc12345"}
 ```
+By name (partial match, preferred when user says "cancel X"):
+```json
+{"action": "remove", "name": "ua877"}
+```
+This removes ALL jobs whose name or message contains "ua877" (case-insensitive). Always prefer name-based removal — don't ask the user for a job ID.
 
 ### Enable/disable a job
 ```json
