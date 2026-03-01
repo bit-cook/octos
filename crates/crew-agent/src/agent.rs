@@ -298,22 +298,19 @@ impl Agent {
             let tools_spec = self.tools.specs();
             self.trim_to_context_window(&mut messages);
 
-            tracing::info!(
+            tracing::debug!(
                 iteration,
                 messages = messages.len(),
                 tools = tools_spec.len(),
-                tool_names = %tools_spec.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "),
                 "calling LLM"
             );
             let (response, streamed) = self
                 .call_llm_with_hooks(&messages, &tools_spec, &config, iteration)
                 .await?;
-            tracing::info!(
+            tracing::debug!(
                 iteration,
                 stop_reason = ?response.stop_reason,
-                content_len = response.content.as_ref().map(|c| c.len()).unwrap_or(0),
                 tool_calls = response.tool_calls.len(),
-                tool_call_names = %response.tool_calls.iter().map(|tc| tc.name.as_str()).collect::<Vec<_>>().join(", "),
                 "LLM response received"
             );
             total_usage.input_tokens += response.usage.input_tokens;
