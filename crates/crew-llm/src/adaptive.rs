@@ -16,7 +16,6 @@ use tracing::{debug, info, warn};
 
 use crate::config::ChatConfig;
 use crate::provider::LlmProvider;
-use crate::retry::RetryProvider;
 use crate::types::{ChatResponse, ChatStream, ToolSpec};
 
 // ---------------------------------------------------------------------------
@@ -548,8 +547,7 @@ impl LlmProvider for AdaptiveRouter {
         match self.try_chat(start_idx, messages, tools, config).await {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                let should_failover = RetryProvider::should_failover(&e);
-                if !should_failover || self.slots.len() == 1 {
+                if self.slots.len() == 1 {
                     return Err(e);
                 }
 
@@ -559,7 +557,8 @@ impl LlmProvider for AdaptiveRouter {
                     "adaptive router failing over"
                 );
 
-                // Failover: try remaining providers in score order
+                // Failover: try remaining providers in score order.
+                // Any error → try next provider. Don't stop on specific error types.
                 let mut scored: Vec<(usize, f64)> = self
                     .slots
                     .iter()
@@ -576,9 +575,6 @@ impl LlmProvider for AdaptiveRouter {
                     match self.try_chat(idx, messages, tools, config).await {
                         Ok(resp) => return Ok(resp),
                         Err(e) => {
-                            if !RetryProvider::should_failover(&e) {
-                                return Err(e);
-                            }
                             warn!(
                                 provider = self.slots[idx].provider.provider_name(),
                                 error = %e,
@@ -607,8 +603,7 @@ impl LlmProvider for AdaptiveRouter {
         {
             Ok(stream) => Ok(stream),
             Err(e) => {
-                let should_failover = RetryProvider::should_failover(&e);
-                if !should_failover || self.slots.len() == 1 {
+                if self.slots.len() == 1 {
                     return Err(e);
                 }
 
@@ -634,9 +629,11 @@ impl LlmProvider for AdaptiveRouter {
                     match self.try_chat_stream(idx, messages, tools, config).await {
                         Ok(stream) => return Ok(stream),
                         Err(e) => {
-                            if !RetryProvider::should_failover(&e) {
-                                return Err(e);
-                            }
+                            warn!(
+                                provider = self.slots[idx].provider.provider_name(),
+                                error = %e,
+                                "adaptive router failover also failed"
+                            );
                             last_error = e;
                         }
                     }

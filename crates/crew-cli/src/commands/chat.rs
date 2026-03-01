@@ -204,6 +204,12 @@ impl ChatCommand {
             .with_config(tool_config.clone()),
         );
 
+        // Register research synthesis tool (map-reduce over deep_search source files)
+        tools.register(crew_agent::SynthesizeResearchTool::new(
+            llm.clone(),
+            data_dir.clone(),
+        ));
+
         // Create memory store and register memory bank tools
         let memory_store = Arc::new(
             MemoryStore::open(&data_dir)
@@ -221,7 +227,17 @@ impl ChatCommand {
             }
         }
 
-        // Load plugins
+        // Bootstrap bundled app-skill binaries (deep_search, deep_crawl, etc.)
+        // Must happen BEFORE plugin loading so PluginLoader picks them up.
+        let project_dir = cwd.join(".crew");
+        let skills_dir = project_dir.join("skills");
+        std::fs::create_dir_all(&skills_dir).ok();
+        let n = crew_agent::bootstrap::bootstrap_bundled_skills(&skills_dir);
+        if n > 0 {
+            eprintln!("Bootstrapped {n} app-skills");
+        }
+
+        // Load plugins (includes app-skills from .crew/skills/)
         let plugin_dirs = Config::plugin_dirs(&cwd);
         if !plugin_dirs.is_empty() {
             if let Err(e) = crew_agent::PluginLoader::load_into(&mut tools, &plugin_dirs) {

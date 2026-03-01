@@ -82,7 +82,10 @@ impl RetryProvider {
 
         // Content-format 400 errors: the request may work with a different
         // provider that has different validation rules for message content.
-        if error_str.contains("400") && error_str.contains("must not be empty") {
+        if error_str.contains("400")
+            && (error_str.contains("must not be empty")
+                || error_str.contains("reasoning_content"))
+        {
             return true;
         }
 

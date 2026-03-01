@@ -69,6 +69,15 @@ impl Tool for PluginTool {
     }
 
     async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
+        tracing::info!(
+            plugin = %self.plugin_name,
+            tool = %self.tool_def.name,
+            executable = %self.executable.display(),
+            timeout_secs = self.timeout.as_secs(),
+            args_size = args.to_string().len(),
+            "spawning plugin process"
+        );
+
         let mut cmd = Command::new(&self.executable);
         cmd.arg(&self.tool_def.name)
             .stdin(Stdio::piped())
@@ -87,6 +96,14 @@ impl Tool for PluginTool {
                 self.executable.display()
             )
         })?;
+
+        let child_pid = child.id().unwrap_or(0);
+        tracing::info!(
+            plugin = %self.plugin_name,
+            tool = %self.tool_def.name,
+            pid = child_pid,
+            "plugin process spawned"
+        );
 
         // Write args to stdin
         if let Some(mut stdin) = child.stdin.take() {
@@ -114,6 +131,16 @@ impl Tool for PluginTool {
 
         let stdout = String::from_utf8_lossy(&result.stdout);
         let stderr = String::from_utf8_lossy(&result.stderr);
+
+        tracing::info!(
+            plugin = %self.plugin_name,
+            tool = %self.tool_def.name,
+            pid = child_pid,
+            exit_code = result.status.code().unwrap_or(-1),
+            stdout_len = stdout.len(),
+            stderr_len = stderr.len(),
+            "plugin process completed"
+        );
 
         // Try to parse structured output
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout) {

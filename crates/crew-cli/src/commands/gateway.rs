@@ -394,18 +394,11 @@ impl GatewayCommand {
         let spawn_tool = Arc::new(spawn);
         tools.register_arc(spawn_tool.clone() as Arc<dyn crew_agent::Tool>);
 
-        // Deep research tool with background notification channel
-        let (research_tx, _research_rx) =
-            tokio::sync::mpsc::channel::<crew_agent::ResearchNotification>(8);
-        tools.register(
-            crew_agent::DeepResearchTool::new(
-                llm.clone(),
-                memory.clone(),
-                data_dir.clone(),
-                research_tx,
-            )
-            .with_config(tool_config.clone()),
-        );
+        // Research synthesis tool (map-reduce over deep_search source files)
+        tools.register(crew_agent::SynthesizeResearchTool::new(
+            llm.clone(),
+            data_dir.clone(),
+        ));
 
         // Memory bank tools (recall/save entity pages)
         tools.register(crew_agent::RecallMemoryTool::new(memory_store.clone()));
@@ -1248,6 +1241,14 @@ async fn build_system_prompt(
         ALWAYS ask the user to pick 1/2/3 first. Do NOT assume web_search is enough.\
         \n\nAfter choosing, you MUST actually call the tool. NEVER just reply with text like \
         \"I'm starting research\" — invoke the tool.\
+        \n\nWhen a query covers multiple independent subjects, call `deep_search` in parallel \
+        (one call per subject) rather than combining everything into a single query. \
+        This produces better coverage and more thorough results.\
+        \n\nAfter `deep_search` completes, ALWAYS use `synthesize_research` to analyze the saved \
+        source files in depth. Pass the research directory path (shown in deep_search output) and \
+        the original query. This reads ALL full-content source files and produces a comprehensive, \
+        data-rich synthesis — much more thorough than the truncated previews. Only fall back to \
+        `read_file` if you need to check one specific source.\
         \n\n## Grounding Rules\
         \n\nFor real-time data (weather, time, location, stock prices, sports scores, exchange rates, \
         news, current events, flight status, package tracking), ALWAYS use `web_search` or `web_fetch`. \
@@ -1257,6 +1258,11 @@ async fn build_system_prompt(
         (deep_search, deep_crawl, spawn, take_photo) — NOT for simple questions. \
         Save important user preferences with `save_memory`.";
     let mut prompt = base.unwrap_or(default_prompt).to_string();
+
+    // Inject current date so the model knows "今年" = which year
+    let today = chrono::Local::now().format("%Y-%m-%d");
+    prompt.push_str(&format!("\n\nCurrent date: {today}"));
+
 
     // Inject dynamically generated persona (from persona.md) if available
     if let Some(persona) = PersonaService::read_persona(data_dir) {

@@ -33,7 +33,8 @@ pub use skills::{SkillInfo, SkillsLoader};
 pub use tools::{
     BrowserTool, ConfigureToolTool, DeepResearchTool, DiffEditTool, EditFileTool, GlobTool,
     GrepTool, ListDirTool, MessageTool, ReadFileTool, RecallMemoryTool, ResearchNotification,
-    SaveMemoryTool, SendFileTool, ShellTool, SpawnTool, TakePhotoTool, Tool, ToolConfigStore,
+    SaveMemoryTool, SendFileTool, ShellTool, SpawnTool, SynthesizeResearchTool, TakePhotoTool,
+    Tool, ToolConfigStore,
     ToolPolicy, ToolRegistry, ToolResult, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 

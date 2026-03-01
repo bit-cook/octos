@@ -298,21 +298,31 @@ impl Agent {
             let tools_spec = self.tools.specs();
             self.trim_to_context_window(&mut messages);
 
-            tracing::debug!(
+            tracing::info!(
                 iteration,
                 messages = messages.len(),
                 tools = tools_spec.len(),
+                message_bytes = messages.iter().map(|m| m.content.len()).sum::<usize>(),
                 "calling LLM"
             );
             let (response, streamed) = self
                 .call_llm_with_hooks(&messages, &tools_spec, &config, iteration)
                 .await?;
-            tracing::debug!(
-                iteration,
-                stop_reason = ?response.stop_reason,
-                tool_calls = response.tool_calls.len(),
-                "LLM response received"
-            );
+            {
+                let tool_names: Vec<&str> = response.tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+                let tool_ids: Vec<&str> = response.tool_calls.iter().map(|tc| tc.id.as_str()).collect();
+                tracing::info!(
+                    iteration,
+                    stop_reason = ?response.stop_reason,
+                    tool_calls = response.tool_calls.len(),
+                    tool_names = %tool_names.join(", "),
+                    tool_ids = %tool_ids.join(", "),
+                    response_content_len = response.content.as_ref().map(|c| c.len()).unwrap_or(0),
+                    input_tokens = response.usage.input_tokens,
+                    output_tokens = response.usage.output_tokens,
+                    "LLM response received"
+                );
+            }
             total_usage.input_tokens += response.usage.input_tokens;
             total_usage.output_tokens += response.usage.output_tokens;
             if let Some(t) = tracker {
@@ -636,6 +646,14 @@ impl Agent {
         &self,
         response: &ChatResponse,
     ) -> Result<(Vec<Message>, Vec<std::path::PathBuf>, TokenUsage)> {
+        // Log parallel tool execution details
+        let tool_names: Vec<&str> = response.tool_calls.iter().map(|tc| tc.name.as_str()).collect();
+        tracing::info!(
+            parallel_tools = response.tool_calls.len(),
+            tool_names = %tool_names.join(", "),
+            "executing tools in parallel"
+        );
+
         // Execute all tool calls concurrently via join_all.
         // The LLM issued these calls in a single response, so they are independent.
         let futures: Vec<_> = response
@@ -774,6 +792,16 @@ impl Agent {
             .collect();
 
         let results = futures::future::join_all(futures).await;
+
+        // Log completion of all parallel tools
+        let result_sizes: Vec<usize> = results.iter().map(|(m, _, _)| m.content.len()).collect();
+        let total_result_bytes: usize = result_sizes.iter().sum();
+        tracing::info!(
+            parallel_tools = results.len(),
+            result_sizes = %result_sizes.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(", "),
+            total_result_bytes,
+            "all parallel tools completed"
+        );
 
         // Aggregate results — join_all preserves input order.
         let mut messages = Vec::with_capacity(results.len());
@@ -1218,8 +1246,28 @@ impl Agent {
         total_usage: &mut TokenUsage,
         tracker: Option<&TokenTracker>,
     ) -> Result<()> {
-        messages.push(self.response_to_message(response));
-        let (tool_messages, tool_files, tool_tokens) = self.execute_tools(response).await?;
+        // Fix tool_call IDs — some models (e.g. qwen via dashscope) generate
+        // duplicate or empty IDs which downstream providers reject with 400.
+        // We fix IDs on the response clone so both the assistant message and tool result
+        // messages use the same corrected IDs.
+        let mut response = response.clone();
+        {
+            let mut seen = std::collections::HashSet::new();
+            for (i, tc) in response.tool_calls.iter_mut().enumerate() {
+                if tc.id.is_empty() || !seen.insert(tc.id.clone()) {
+                    let new_id = format!("call_{}_{}", i, &tc.name);
+                    tracing::warn!(
+                        old_id = %tc.id,
+                        new_id = %new_id,
+                        tool = %tc.name,
+                        "fixing empty/duplicate tool_call_id"
+                    );
+                    tc.id = new_id;
+                }
+            }
+        }
+        messages.push(self.response_to_message(&response));
+        let (tool_messages, tool_files, tool_tokens) = self.execute_tools(&response).await?;
         messages.extend(tool_messages);
         files_modified.extend(tool_files);
         total_usage.input_tokens += tool_tokens.input_tokens;

@@ -158,10 +158,23 @@ impl OpenAIProvider {
                         })
                         .collect()
                 });
+                // Kimi-k2.5 (and similar thinking models) require reasoning_content
+                // to be present (even empty) on ALL assistant messages when thinking
+                // is enabled. When omitted, the API returns 400 "reasoning_content
+                // is missing in assistant tool call message".
+                let reasoning = match m.reasoning_content.as_deref() {
+                    Some(r) if !r.is_empty() => Some(r),
+                    // Kimi-k2.5 requires non-empty reasoning_content on ALL
+                    // assistant messages when thinking is enabled — empty string
+                    // is rejected as "missing".
+                    _ if role == "assistant" => Some("."),
+                    _ => None,
+                };
+
                 OpenAIMessage {
                     role,
                     content: build_openai_content(m, &self.hints),
-                    reasoning_content: m.reasoning_content.as_deref(),
+                    reasoning_content: reasoning,
                     tool_call_id: m.tool_call_id.as_deref(),
                     tool_calls,
                 }
