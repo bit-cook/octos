@@ -226,5 +226,6 @@ fn channel_type(ch: &ChannelCredentials) -> &'static str {
         ChannelCredentials::WhatsApp { .. } => "whatsapp",
         ChannelCredentials::Feishu { .. } => "feishu",
         ChannelCredentials::Email { .. } => "email",
+        ChannelCredentials::Twilio { .. } => "twilio",
     }
 }

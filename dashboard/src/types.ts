@@ -39,6 +39,13 @@ export interface EmailSettings {
   feishu_region?: string | null
 }
 
+export interface HookConfig {
+  event: string
+  command: string[]
+  timeout_ms?: number
+  tool_filter?: string[]
+}
+
 export interface ProfileConfig {
   provider?: string | null
   model?: string | null
@@ -50,6 +57,7 @@ export interface ProfileConfig {
   gateway: GatewaySettings
   email?: EmailSettings | null
   env_vars: Record<string, string>
+  hooks?: HookConfig[]
 }
 
 export interface UserProfile {

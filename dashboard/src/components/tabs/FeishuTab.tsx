@@ -165,7 +165,7 @@ export default function FeishuTab({ config, onChange, profileId }: Props) {
                 <input
                   type="number"
                   value={(channel as any)?.webhook_port || ''}
-                  onChange={(e) => updateField('webhook_port', e.target.value ? Number(e.target.value) as any : '')}
+                  onChange={(e) => updateField('webhook_port', e.target.value ? Number(e.target.value) as any : null as any)}
                   placeholder="auto"
                   className="input text-xs"
                 />
