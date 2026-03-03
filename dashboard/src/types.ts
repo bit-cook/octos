@@ -216,4 +216,6 @@ export interface AdminBotConfig {
   watchdog_enabled: boolean
   health_check_interval_secs: number
   max_restart_attempts: number
+  env_vars: Record<string, string>
+  fallback_models?: FallbackModel[]
 }
