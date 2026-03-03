@@ -276,18 +276,22 @@ pub async fn my_profile(
 pub async fn update_my_profile(
     State(state): State<Arc<AppState>>,
     axum::Extension(identity): axum::Extension<AuthIdentity>,
-    Json(req): Json<super::admin::UpdateProfileRequest>,
-) -> Result<Json<ProfileResponse>, StatusCode> {
-    let user_id = get_user_id(&identity)?;
+    body: String,
+) -> Result<Json<ProfileResponse>, (StatusCode, String)> {
+    let req: super::admin::UpdateProfileRequest = serde_json::from_str(&body).map_err(|e| {
+        tracing::warn!(error = %e, body = %body, "failed to parse my profile update request");
+        (StatusCode::BAD_REQUEST, format!("Invalid request body: {e}"))
+    })?;
+    let user_id = get_user_id(&identity).map_err(|s| (s, "unauthorized".into()))?;
     let ps = state
         .profile_store
         .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "admin not configured".into()))?;
 
     let mut profile = ps
         .get(&user_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+        .ok_or((StatusCode::NOT_FOUND, format!("profile '{user_id}' not found")))?;
 
     // Apply updates (same logic as admin::update_profile but scoped)
     if let Some(name) = req.name {
@@ -302,7 +306,7 @@ pub async fn update_my_profile(
     profile.updated_at = chrono::Utc::now();
 
     ps.save_with_merge(&mut profile)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let status = if let Some(ref pm) = state.process_manager {
         pm.status(&profile.id).await

@@ -31,16 +31,11 @@ pub enum AuthIdentity {
 
 /// Build the axum router with all API routes.
 pub fn build_router(state: Arc<AppState>) -> Router {
-    // Restrict CORS to localhost origins (override in reverse proxy for production)
+    // Allow any origin — auth is handled via tokens, not CORS.
+    // This is required when the dashboard is accessed via IP or custom domain
+    // rather than localhost.
     let cors = CorsLayer::new()
-        .allow_origin([
-            "http://localhost:3000".parse::<HeaderValue>().unwrap(),
-            "http://localhost:5173".parse::<HeaderValue>().unwrap(),
-            "http://localhost:8080".parse::<HeaderValue>().unwrap(),
-            "http://127.0.0.1:3000".parse::<HeaderValue>().unwrap(),
-            "http://127.0.0.1:5173".parse::<HeaderValue>().unwrap(),
-            "http://127.0.0.1:8080".parse::<HeaderValue>().unwrap(),
-        ])
+        .allow_origin(tower_http::cors::Any)
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 

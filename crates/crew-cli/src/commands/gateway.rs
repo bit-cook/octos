@@ -1544,6 +1544,7 @@ async fn handle_account_command(
                             crate::profiles::ChannelCredentials::WhatsApp { .. } => "whatsapp",
                             crate::profiles::ChannelCredentials::Feishu { .. } => "feishu",
                             crate::profiles::ChannelCredentials::Email { .. } => "email",
+                            crate::profiles::ChannelCredentials::Twilio { .. } => "twilio",
                         })
                         .collect();
                     lines.push(format!(

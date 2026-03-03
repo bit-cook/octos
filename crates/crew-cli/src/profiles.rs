@@ -184,6 +184,16 @@ pub enum ChannelCredentials {
         #[serde(default = "default_email_pass_env")]
         password_env: String,
     },
+    Twilio {
+        #[serde(default = "default_twilio_sid_env")]
+        account_sid_env: String,
+        #[serde(default = "default_twilio_token_env")]
+        auth_token_env: String,
+        #[serde(default)]
+        from_number: String,
+        #[serde(default = "default_twilio_webhook_port")]
+        webhook_port: u16,
+    },
 }
 
 fn default_telegram_env() -> String {
@@ -218,6 +228,15 @@ fn default_email_user_env() -> String {
 }
 fn default_email_pass_env() -> String {
     "EMAIL_PASSWORD".into()
+}
+fn default_twilio_sid_env() -> String {
+    "TWILIO_ACCOUNT_SID".into()
+}
+fn default_twilio_token_env() -> String {
+    "TWILIO_AUTH_TOKEN".into()
+}
+fn default_twilio_webhook_port() -> u16 {
+    8090
 }
 
 /// Gateway-specific settings.
@@ -703,6 +722,20 @@ fn channel_to_entry(cred: &ChannelCredentials) -> serde_json::Value {
                 "smtp_port": smtp_port,
                 "username_env": username_env,
                 "password_env": password_env,
+            }
+        }),
+        ChannelCredentials::Twilio {
+            account_sid_env,
+            auth_token_env,
+            from_number,
+            webhook_port,
+        } => serde_json::json!({
+            "type": "twilio",
+            "settings": {
+                "account_sid_env": account_sid_env,
+                "auth_token_env": auth_token_env,
+                "from_number": from_number,
+                "webhook_port": webhook_port,
             }
         }),
     }

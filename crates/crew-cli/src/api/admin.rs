@@ -219,8 +219,12 @@ pub async fn create_profile(
 pub async fn update_profile(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateProfileRequest>,
+    body: String,
 ) -> Result<Json<ProfileResponse>, (StatusCode, String)> {
+    let req: UpdateProfileRequest = serde_json::from_str(&body).map_err(|e| {
+        tracing::warn!(profile_id = %id, error = %e, body = %body, "failed to parse profile update request");
+        (StatusCode::BAD_REQUEST, format!("Invalid request body: {e}"))
+    })?;
     let store = state.profile_store.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "admin not configured".into(),
