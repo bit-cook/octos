@@ -38,6 +38,12 @@ pub struct AdminBotConfigPayload {
     pub health_check_interval_secs: u64,
     #[serde(default = "default_max_restart")]
     pub max_restart_attempts: u32,
+    /// Env vars (API keys etc.) — same pattern as profile config.
+    #[serde(default)]
+    pub env_vars: std::collections::HashMap<String, String>,
+    /// Fallback LLM models for automatic failover.
+    #[serde(default)]
+    pub fallback_models: Vec<crate::profiles::FallbackModelConfig>,
 }
 
 fn default_true() -> bool {
@@ -66,6 +72,8 @@ impl Default for AdminBotConfigPayload {
             watchdog_enabled: true,
             health_check_interval_secs: 60,
             max_restart_attempts: 3,
+            env_vars: std::collections::HashMap::new(),
+            fallback_models: Vec::new(),
         }
     }
 }

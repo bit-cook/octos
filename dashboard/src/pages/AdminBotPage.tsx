@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../api'
 import { useToast } from '../components/Toast'
-import type { AdminBotConfig } from '../types'
-import { PROVIDERS } from '../types'
+import type { AdminBotConfig, ProfileConfig } from '../types'
+import LlmProviderTab from '../components/tabs/LlmProviderTab'
 
 const DEFAULT_CONFIG: AdminBotConfig = {
   telegram_token_env: null,
@@ -18,6 +18,8 @@ const DEFAULT_CONFIG: AdminBotConfig = {
   watchdog_enabled: true,
   health_check_interval_secs: 60,
   max_restart_attempts: 3,
+  env_vars: {},
+  fallback_models: [],
 }
 
 export default function AdminBotPage() {
@@ -88,6 +90,29 @@ export default function AdminBotPage() {
   const removeFeishuId = (id: string) => {
     update({ admin_feishu_ids: config.admin_feishu_ids.filter((x) => x !== id) })
   }
+
+  // Adapter: build a virtual ProfileConfig for LlmProviderTab
+  const llmConfig = useMemo<ProfileConfig>(() => ({
+    provider: config.provider,
+    model: config.model,
+    base_url: config.base_url,
+    api_key_env: config.api_key_env,
+    fallback_models: config.fallback_models || [],
+    channels: [],
+    gateway: {},
+    env_vars: config.env_vars || {},
+  }), [config.provider, config.model, config.base_url, config.api_key_env, config.fallback_models, config.env_vars])
+
+  const handleLlmChange = useCallback((updated: ProfileConfig) => {
+    update({
+      provider: updated.provider,
+      model: updated.model,
+      base_url: updated.base_url,
+      api_key_env: updated.api_key_env,
+      fallback_models: updated.fallback_models,
+      env_vars: updated.env_vars,
+    })
+  }, [])
 
   if (loading) {
     return (
@@ -200,46 +225,9 @@ export default function AdminBotPage() {
         </SubSection>
       </Section>
 
-      {/* Section 2: LLM Provider */}
+      {/* Section 2: LLM Provider — reuses the same component as profile settings */}
       <Section title="LLM Provider">
-        <Field label="Provider">
-          <select
-            className="input text-sm"
-            value={config.provider || ''}
-            onChange={(e) => update({ provider: e.target.value || null })}
-          >
-            <option value="">— inherit from global —</option>
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Model">
-          <input
-            className="input text-sm"
-            placeholder="e.g. gpt-4o-mini"
-            value={config.model || ''}
-            onChange={(e) => update({ model: e.target.value || null })}
-          />
-        </Field>
-        <Field label="Base URL">
-          <input
-            className="input text-sm"
-            placeholder="https://api.openai.com/v1"
-            value={config.base_url || ''}
-            onChange={(e) => update({ base_url: e.target.value || null })}
-          />
-        </Field>
-        <Field label="API key env var">
-          <input
-            className="input text-sm"
-            placeholder="OPENAI_API_KEY"
-            value={config.api_key_env || ''}
-            onChange={(e) => update({ api_key_env: e.target.value || null })}
-          />
-        </Field>
+        <LlmProviderTab config={llmConfig} onChange={handleLlmChange} />
       </Section>
 
       {/* Section 3: Watchdog & Monitoring */}
