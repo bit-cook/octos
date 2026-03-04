@@ -248,8 +248,23 @@ pub async fn update_profile(
     if let Some(data_dir) = req.data_dir {
         profile.data_dir = data_dir;
     }
-    if let Some(new_config) = req.config {
-        profile.config = new_config;
+    // Merge config: parse the raw JSON "config" object and overlay only the
+    // keys that are explicitly present, preserving all other existing fields.
+    // This lets the admin tool send `{"config":{"model":"x"}}` without wiping
+    // channels/env_vars, while the dashboard can still send a full config object.
+    {
+        let raw: serde_json::Value =
+            serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+        if let Some(config_patch) = raw.get("config") {
+            if config_patch.is_object() {
+                let mut existing =
+                    serde_json::to_value(&profile.config).unwrap_or(serde_json::json!({}));
+                json_merge(&mut existing, config_patch);
+                if let Ok(merged) = serde_json::from_value(existing) {
+                    profile.config = merged;
+                }
+            }
+        }
     }
     profile.updated_at = Utc::now();
 
@@ -579,6 +594,23 @@ pub async fn test_provider(
             message: String::new(),
             error: Some("Request timed out after 30 seconds".into()),
         })),
+    }
+}
+
+/// Recursively merge `patch` into `target` (RFC 7396 JSON Merge Patch).
+/// Only keys present in `patch` are overwritten; absent keys are preserved.
+fn json_merge(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    if let (Some(target_obj), Some(patch_obj)) = (target.as_object_mut(), patch.as_object()) {
+        for (key, value) in patch_obj {
+            if value.is_object() && target_obj.get(key).is_some_and(|v| v.is_object()) {
+                // Recursively merge nested objects (e.g. gateway settings)
+                json_merge(target_obj.get_mut(key).unwrap(), value);
+            } else {
+                target_obj.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *target = patch.clone();
     }
 }
 
