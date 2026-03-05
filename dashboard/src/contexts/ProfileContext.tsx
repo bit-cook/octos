@@ -17,6 +17,7 @@ const defaultConfig: ProfileConfig = {
 
 interface ProfileContextValue {
   profileId: string
+  parentId: string | null
   config: ProfileConfig
   status: ProcessStatus | null
   isOwn: boolean
@@ -55,6 +56,7 @@ export function ProfileProvider({ children }: Props) {
   const [status, setStatus] = useState<ProcessStatus | null>(null)
   const [profileName, setProfileName] = useState('')
   const [enabled, setEnabled] = useState(true)
+  const [parentId, setParentId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -91,6 +93,7 @@ export function ProfileProvider({ children }: Props) {
       setStatus(profile.status)
       setProfileName(profile.name)
       setEnabled(profile.enabled)
+      setParentId(profile.parent_id || null)
     } catch (e: any) {
       toast(e.message, 'error')
     } finally {
@@ -164,6 +167,7 @@ export function ProfileProvider({ children }: Props) {
 
   const value: ProfileContextValue = {
     profileId,
+    parentId,
     config,
     status,
     isOwn,

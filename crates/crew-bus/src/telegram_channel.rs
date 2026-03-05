@@ -12,7 +12,10 @@ use crew_core::{InboundMessage, OutboundMessage};
 use eyre::{Result, WrapErr};
 use reqwest::Client;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, FileId, InputFile, ParseMode, UpdateKind};
+use teloxide::types::{
+    BotCommand, ChatId, FileId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
+    MessageId, ParseMode, UpdateKind,
+};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -120,6 +123,51 @@ impl TelegramChannel {
         let truncated: String = text.chars().take(CAPTION_MAX_CHARS - 1).collect();
         format!("{truncated}…")
     }
+
+    /// Register bot commands in Telegram's command menu.
+    async fn set_commands(&self) {
+        let commands = vec![
+            BotCommand::new("new", "Start new session or create named session"),
+            BotCommand::new("s", "Switch to a named session"),
+            BotCommand::new("sessions", "List and switch sessions"),
+            BotCommand::new("back", "Switch to previous session"),
+            BotCommand::new("delete", "Delete a named session"),
+        ];
+        match self.bot.set_my_commands(commands).await {
+            Ok(_) => info!("Telegram bot commands registered"),
+            Err(e) => warn!("Failed to set bot commands: {e}"),
+        }
+    }
+
+    /// Parse inline keyboard from OutboundMessage metadata.
+    ///
+    /// Expected format:
+    /// ```json
+    /// { "inline_keyboard": [[{"text": "Label", "callback_data": "s:topic"}]] }
+    /// ```
+    fn parse_inline_keyboard(metadata: &serde_json::Value) -> Option<InlineKeyboardMarkup> {
+        let rows = metadata.get("inline_keyboard")?.as_array()?;
+
+        let mut keyboard_rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+        for row in rows {
+            let buttons = row.as_array()?;
+            let mut row_buttons = Vec::new();
+            for btn in buttons {
+                let text = btn.get("text")?.as_str()?;
+                let data = btn.get("callback_data")?.as_str()?;
+                row_buttons.push(InlineKeyboardButton::callback(text.to_string(), data.to_string()));
+            }
+            if !row_buttons.is_empty() {
+                keyboard_rows.push(row_buttons);
+            }
+        }
+
+        if keyboard_rows.is_empty() {
+            None
+        } else {
+            Some(InlineKeyboardMarkup::new(keyboard_rows))
+        }
+    }
 }
 
 #[async_trait]
@@ -137,6 +185,9 @@ impl Channel for TelegramChannel {
         use teloxide::update_listeners::{AsUpdateStream, polling_default};
 
         info!("Starting Telegram channel (long polling)");
+
+        // Register bot commands in Telegram's command menu
+        self.set_commands().await;
 
         let mut consecutive_failures: u32 = 0;
 
@@ -168,114 +219,167 @@ impl Channel for TelegramChannel {
                     }
                 };
 
-                if let UpdateKind::Message(msg) = update.kind {
-                    // Extract text: plain text or caption (for photos/documents)
-                    let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
+                match update.kind {
+                    UpdateKind::Message(msg) => {
+                        // Extract text: plain text or caption (for photos/documents)
+                        let text = msg.text().or(msg.caption()).unwrap_or("").to_string();
 
-                    // Download media attachments with timeout so we don't block polling
-                    let mut media = Vec::new();
+                        // Download media attachments with timeout so we don't block polling
+                        let mut media = Vec::new();
 
-                    if let Some(sizes) = msg.photo() {
-                        if let Some(photo) = sizes.last() {
+                        if let Some(sizes) = msg.photo() {
+                            if let Some(photo) = sizes.last() {
+                                match tokio::time::timeout(
+                                    MEDIA_DOWNLOAD_TIMEOUT,
+                                    self.download_telegram_file(&photo.file.id, ".jpg"),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(path)) => media.push(path.display().to_string()),
+                                    Ok(Err(e)) => warn!("failed to download photo: {e}"),
+                                    Err(_) => warn!("photo download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                }
+                            }
+                        }
+
+                        if let Some(voice) = msg.voice() {
                             match tokio::time::timeout(
                                 MEDIA_DOWNLOAD_TIMEOUT,
-                                self.download_telegram_file(&photo.file.id, ".jpg"),
+                                self.download_telegram_file(&voice.file.id, ".ogg"),
                             )
                             .await
                             {
                                 Ok(Ok(path)) => media.push(path.display().to_string()),
-                                Ok(Err(e)) => warn!("failed to download photo: {e}"),
-                                Err(_) => warn!("photo download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                Ok(Err(e)) => warn!("failed to download voice: {e}"),
+                                Err(_) => warn!("voice download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
                             }
                         }
-                    }
 
-                    if let Some(voice) = msg.voice() {
-                        match tokio::time::timeout(
-                            MEDIA_DOWNLOAD_TIMEOUT,
-                            self.download_telegram_file(&voice.file.id, ".ogg"),
-                        )
-                        .await
-                        {
-                            Ok(Ok(path)) => media.push(path.display().to_string()),
-                            Ok(Err(e)) => warn!("failed to download voice: {e}"),
-                            Err(_) => warn!("voice download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                        if let Some(audio) = msg.audio() {
+                            let ext = audio
+                                .file_name
+                                .as_ref()
+                                .and_then(|n| std::path::Path::new(n).extension())
+                                .map(|e| format!(".{}", e.to_string_lossy()))
+                                .unwrap_or_else(|| ".mp3".to_string());
+                            match tokio::time::timeout(
+                                MEDIA_DOWNLOAD_TIMEOUT,
+                                self.download_telegram_file(&audio.file.id, &ext),
+                            )
+                            .await
+                            {
+                                Ok(Ok(path)) => media.push(path.display().to_string()),
+                                Ok(Err(e)) => warn!("failed to download audio: {e}"),
+                                Err(_) => warn!("audio download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                            }
                         }
-                    }
 
-                    if let Some(audio) = msg.audio() {
-                        let ext = audio
-                            .file_name
-                            .as_ref()
-                            .and_then(|n| std::path::Path::new(n).extension())
-                            .map(|e| format!(".{}", e.to_string_lossy()))
-                            .unwrap_or_else(|| ".mp3".to_string());
-                        match tokio::time::timeout(
-                            MEDIA_DOWNLOAD_TIMEOUT,
-                            self.download_telegram_file(&audio.file.id, &ext),
-                        )
-                        .await
-                        {
-                            Ok(Ok(path)) => media.push(path.display().to_string()),
-                            Ok(Err(e)) => warn!("failed to download audio: {e}"),
-                            Err(_) => warn!("audio download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                        if let Some(doc) = msg.document() {
+                            let ext = doc
+                                .file_name
+                                .as_ref()
+                                .and_then(|n| std::path::Path::new(n).extension())
+                                .map(|e| format!(".{}", e.to_string_lossy()))
+                                .unwrap_or_default();
+                            match tokio::time::timeout(
+                                MEDIA_DOWNLOAD_TIMEOUT,
+                                self.download_telegram_file(&doc.file.id, &ext),
+                            )
+                            .await
+                            {
+                                Ok(Ok(path)) => media.push(path.display().to_string()),
+                                Ok(Err(e)) => warn!("failed to download document: {e}"),
+                                Err(_) => warn!("document download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                            }
                         }
-                    }
 
-                    if let Some(doc) = msg.document() {
-                        let ext = doc
-                            .file_name
+                        // Skip messages with no text and no media
+                        if text.is_empty() && media.is_empty() {
+                            continue;
+                        }
+
+                        let sender_id = msg
+                            .from
                             .as_ref()
-                            .and_then(|n| std::path::Path::new(n).extension())
-                            .map(|e| format!(".{}", e.to_string_lossy()))
+                            .map(|u| {
+                                let id = u.id.to_string();
+                                match &u.username {
+                                    Some(name) => format!("{id}|{name}"),
+                                    None => id,
+                                }
+                            })
                             .unwrap_or_default();
-                        match tokio::time::timeout(
-                            MEDIA_DOWNLOAD_TIMEOUT,
-                            self.download_telegram_file(&doc.file.id, &ext),
-                        )
-                        .await
-                        {
-                            Ok(Ok(path)) => media.push(path.display().to_string()),
-                            Ok(Err(e)) => warn!("failed to download document: {e}"),
-                            Err(_) => warn!("document download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+
+                        if !self.check_allowed(&sender_id) {
+                            continue;
+                        }
+
+                        let inbound = InboundMessage {
+                            channel: "telegram".into(),
+                            sender_id,
+                            chat_id: msg.chat.id.0.to_string(),
+                            content: text,
+                            timestamp: Utc::now(),
+                            media,
+                            metadata: serde_json::json!({}),
+                        };
+
+                        if inbound_tx.send(inbound).await.is_err() {
+                            info!("Inbound channel closed, stopping Telegram listener");
+                            return Ok(());
                         }
                     }
 
-                    // Skip messages with no text and no media
-                    if text.is_empty() && media.is_empty() {
-                        continue;
-                    }
+                    UpdateKind::CallbackQuery(cb) => {
+                        // Dismiss the loading spinner on the button
+                        if let Err(e) = self.bot.answer_callback_query(cb.id.clone()).await {
+                            warn!("Failed to answer callback query: {e}");
+                        }
 
-                    let sender_id = msg
-                        .from
-                        .as_ref()
-                        .map(|u| {
-                            let id = u.id.to_string();
-                            match &u.username {
+                        let sender_id = {
+                            let id = cb.from.id.to_string();
+                            match &cb.from.username {
                                 Some(name) => format!("{id}|{name}"),
                                 None => id,
                             }
-                        })
-                        .unwrap_or_default();
+                        };
 
-                    if !self.check_allowed(&sender_id) {
-                        continue;
+                        if !self.check_allowed(&sender_id) {
+                            continue;
+                        }
+
+                        // Extract chat_id and message_id from the callback's source message
+                        let (chat_id, message_id) = match &cb.message {
+                            Some(mim) => (
+                                mim.chat().id.0.to_string(),
+                                Some(mim.id().0.to_string()),
+                            ),
+                            None => continue,
+                        };
+
+                        let callback_data = cb.data.unwrap_or_default();
+
+                        let inbound = InboundMessage {
+                            channel: "telegram".into(),
+                            sender_id,
+                            chat_id,
+                            content: callback_data.clone(),
+                            timestamp: Utc::now(),
+                            media: vec![],
+                            metadata: serde_json::json!({
+                                "callback_query": true,
+                                "callback_data": callback_data,
+                                "callback_message_id": message_id,
+                            }),
+                        };
+
+                        if inbound_tx.send(inbound).await.is_err() {
+                            info!("Inbound channel closed, stopping Telegram listener");
+                            return Ok(());
+                        }
                     }
 
-                    let inbound = InboundMessage {
-                        channel: "telegram".into(),
-                        sender_id,
-                        chat_id: msg.chat.id.0.to_string(),
-                        content: text,
-                        timestamp: Utc::now(),
-                        media,
-                        metadata: serde_json::json!({}),
-                    };
-
-                    if inbound_tx.send(inbound).await.is_err() {
-                        info!("Inbound channel closed, stopping Telegram listener");
-                        return Ok(());
-                    }
+                    _ => {} // Ignore other update kinds
                 }
             }
 
@@ -329,10 +433,20 @@ impl Channel for TelegramChannel {
                     .wrap_err_with(|| format!("failed to send document: {path}"))?;
             }
         } else {
-            // Normal text message with HTML fallback
             let html = markdown_to_telegram_html(&msg.content);
-            self.send_html_with_fallback(ChatId(chat_id), &html)
-                .await?;
+
+            // Check for inline keyboard in metadata
+            if let Some(markup) = Self::parse_inline_keyboard(&msg.metadata) {
+                self.bot
+                    .send_message(ChatId(chat_id), &html)
+                    .parse_mode(ParseMode::Html)
+                    .reply_markup(markup)
+                    .await
+                    .wrap_err("failed to send Telegram message with keyboard")?;
+            } else {
+                self.send_html_with_fallback(ChatId(chat_id), &html)
+                    .await?;
+            }
         }
 
         Ok(())
@@ -365,9 +479,18 @@ impl Channel for TelegramChannel {
             .wrap_err_with(|| format!("invalid Telegram chat_id: {}", msg.chat_id))?;
 
         let html = markdown_to_telegram_html(&msg.content);
-        let sent = self
-            .send_html_with_fallback(ChatId(chat_id), &html)
-            .await?;
+
+        let sent = if let Some(markup) = Self::parse_inline_keyboard(&msg.metadata) {
+            self.bot
+                .send_message(ChatId(chat_id), &html)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(markup)
+                .await
+                .wrap_err("failed to send Telegram message with keyboard")?
+        } else {
+            self.send_html_with_fallback(ChatId(chat_id), &html)
+                .await?
+        };
 
         Ok(Some(sent.id.0.to_string()))
     }
@@ -382,7 +505,7 @@ impl Channel for TelegramChannel {
 
         let html = markdown_to_telegram_html(new_content);
         self.bot
-            .edit_message_text(ChatId(cid), teloxide::types::MessageId(mid), &html)
+            .edit_message_text(ChatId(cid), MessageId(mid), &html)
             .parse_mode(ParseMode::Html)
             .await
             .wrap_err("failed to edit Telegram message")?;
@@ -398,9 +521,42 @@ impl Channel for TelegramChannel {
             .wrap_err_with(|| format!("invalid Telegram message_id: {message_id}"))?;
 
         self.bot
-            .delete_message(ChatId(cid), teloxide::types::MessageId(mid))
+            .delete_message(ChatId(cid), MessageId(mid))
             .await
             .wrap_err("failed to delete Telegram message")?;
+        Ok(())
+    }
+
+    async fn edit_message_with_metadata(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        new_content: &str,
+        metadata: &serde_json::Value,
+    ) -> Result<()> {
+        let cid: i64 = chat_id
+            .parse()
+            .wrap_err_with(|| format!("invalid Telegram chat_id: {chat_id}"))?;
+        let mid: i32 = message_id
+            .parse()
+            .wrap_err_with(|| format!("invalid Telegram message_id: {message_id}"))?;
+
+        let html = markdown_to_telegram_html(new_content);
+
+        if let Some(markup) = Self::parse_inline_keyboard(metadata) {
+            self.bot
+                .edit_message_text(ChatId(cid), MessageId(mid), &html)
+                .parse_mode(ParseMode::Html)
+                .reply_markup(markup)
+                .await
+                .wrap_err("failed to edit Telegram message with keyboard")?;
+        } else {
+            self.bot
+                .edit_message_text(ChatId(cid), MessageId(mid), &html)
+                .parse_mode(ParseMode::Html)
+                .await
+                .wrap_err("failed to edit Telegram message")?;
+        }
         Ok(())
     }
 }

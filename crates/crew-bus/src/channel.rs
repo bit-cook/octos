@@ -66,6 +66,18 @@ pub trait Channel: Send + Sync {
     async fn delete_message(&self, _chat_id: &str, _message_id: &str) -> Result<()> {
         Ok(())
     }
+
+    /// Edit a message with platform-specific metadata (e.g. inline keyboards).
+    /// Default: ignores metadata and delegates to `edit_message()`.
+    async fn edit_message_with_metadata(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        new_content: &str,
+        _metadata: &serde_json::Value,
+    ) -> Result<()> {
+        self.edit_message(chat_id, message_id, new_content).await
+    }
 }
 
 /// Manages registered channels and dispatches outbound messages.

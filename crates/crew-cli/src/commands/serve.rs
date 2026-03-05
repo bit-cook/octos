@@ -76,21 +76,21 @@ impl ServeCommand {
             None => std::env::current_dir().wrap_err("failed to get current directory")?,
         };
 
-        let config = if let Some(config_path) = &self.config {
-            Config::from_file(config_path)?
+        let (config, resolved_config_path) = if let Some(config_path) = &self.config {
+            (Config::from_file(config_path)?, Some(config_path.clone()))
         } else {
             // Resolve config path the same way Config::load does
             let local_config = cwd.join(".crew").join("config.json");
             if local_config.exists() {
-                Config::from_file(&local_config)?
+                (Config::from_file(&local_config)?, Some(local_config))
             } else if let Some(global_config) = Config::global_config_path() {
                 if global_config.exists() {
-                    Config::from_file(&global_config)?
+                    (Config::from_file(&global_config)?, Some(global_config))
                 } else {
-                    Config::default()
+                    (Config::default(), None)
                 }
             } else {
-                Config::default()
+                (Config::default(), None)
             }
         };
 

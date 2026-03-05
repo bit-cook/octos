@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { ProfileResponse } from '../types'
 import { CHANNEL_COLORS, CHANNEL_LABELS } from '../types'
@@ -5,6 +6,7 @@ import StatusBadge from './StatusBadge'
 
 interface Props {
   profile: ProfileResponse
+  subAccounts?: ProfileResponse[]
   onStart: (id: string) => void
   onStop: (id: string) => void
 }
@@ -19,7 +21,8 @@ function formatUptime(secs: number | null): string {
   return `${mins}m`
 }
 
-export default function ProfileCard({ profile, onStart, onStop }: Props) {
+export default function ProfileCard({ profile, subAccounts = [], onStart, onStop }: Props) {
+  const [expanded, setExpanded] = useState(false)
   const channels = profile.config.channels || []
   const provider = profile.config.provider || 'anthropic'
   const model = profile.config.model || 'default'
@@ -92,6 +95,98 @@ export default function ProfileCard({ profile, onStart, onStop }: Props) {
           Configure
         </Link>
       </div>
+
+      {/* Sub-accounts section */}
+      {subAccounts.length > 0 && (
+        <div className="mt-4 pt-3 border-t border-gray-700/30">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors w-full"
+          >
+            <svg
+              className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+            <span className="font-medium">
+              {subAccounts.length} sub-account{subAccounts.length !== 1 ? 's' : ''}
+            </span>
+            <span className="ml-auto text-gray-600">
+              {subAccounts.filter(s => s.status.running).length} running
+            </span>
+          </button>
+
+          {expanded && (
+            <div className="mt-2 space-y-2">
+              {subAccounts.map((sub) => (
+                <SubAccountRow
+                  key={sub.id}
+                  sub={sub}
+                  onStart={onStart}
+                  onStop={onStop}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SubAccountRow({
+  sub,
+  onStart,
+  onStop,
+}: {
+  sub: ProfileResponse
+  onStart: (id: string) => void
+  onStop: (id: string) => void
+}) {
+  const channels = sub.config.channels || []
+  const shortName = sub.name
+
+  return (
+    <div className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-colors">
+      <StatusBadge running={sub.status.running} className="shrink-0" />
+
+      <Link
+        to={`/profile/${sub.id}`}
+        className="text-xs text-gray-300 hover:text-accent transition-colors truncate min-w-0 flex-1"
+      >
+        {shortName}
+      </Link>
+
+      {channels.length > 0 && (
+        <div className="flex gap-1 shrink-0">
+          {channels.map((ch, i) => {
+            const type = ch.type as keyof typeof CHANNEL_COLORS
+            return (
+              <span
+                key={i}
+                className={`${CHANNEL_COLORS[type] || 'bg-gray-500'} text-white text-[9px] font-bold px-1 py-0 rounded`}
+              >
+                {CHANNEL_LABELS[type] || ch.type.toUpperCase().slice(0, 2)}
+              </span>
+            )
+          })}
+        </div>
+      )}
+
+      <button
+        onClick={() => sub.status.running ? onStop(sub.id) : onStart(sub.id)}
+        className={`shrink-0 px-2 py-0.5 text-[10px] font-medium rounded ${
+          sub.status.running
+            ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+            : 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+        } transition`}
+      >
+        {sub.status.running ? 'Stop' : 'Start'}
+      </button>
     </div>
   )
 }

@@ -66,6 +66,7 @@ export interface UserProfile {
   name: string
   enabled: boolean
   data_dir: string | null
+  parent_id?: string | null
   config: ProfileConfig
   created_at: string
   updated_at: string
@@ -76,6 +77,7 @@ export interface ProfileResponse {
   name: string
   enabled: boolean
   data_dir: string | null
+  parent_id?: string | null
   config: ProfileConfig
   created_at: string
   updated_at: string

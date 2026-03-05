@@ -1,22 +1,48 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useProfile } from '../../contexts/ProfileContext'
 import { useAuth } from '../../contexts/AuthContext'
 import GatewayControls from '../../components/GatewayControls'
 import ConfirmDialog from '../../components/ConfirmDialog'
+import StatusBadge from '../../components/StatusBadge'
 import { CHANNEL_COLORS, CHANNEL_LABELS } from '../../types'
+import type { ProfileResponse } from '../../types'
+import { api } from '../../api'
+import { useToast } from '../../components/Toast'
 
 export default function HomePage() {
   const { isAdmin } = useAuth()
   const {
-    profileId, config, setConfig, status, isOwn, loading,
+    profileId, parentId, config, setConfig, status, isOwn, loading,
     startGateway, stopGateway, restartGateway,
     profileName, setProfileName, enabled, setEnabled,
     save, saving, deleteProfile,
   } = useProfile()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [actionLoading, setActionLoading] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+
+  // Sub-accounts state
+  const [subAccounts, setSubAccounts] = useState<ProfileResponse[]>([])
+  const [subsLoading, setSubsLoading] = useState(false)
+
+  const loadSubAccounts = useCallback(async () => {
+    if (parentId || !profileId || !isAdmin) return
+    try {
+      setSubsLoading(true)
+      const subs = await api.listSubAccounts(profileId)
+      setSubAccounts(subs)
+    } catch {
+      // silently ignore — profile may not have sub-accounts
+    } finally {
+      setSubsLoading(false)
+    }
+  }, [profileId, parentId, isAdmin])
+
+  useEffect(() => {
+    loadSubAccounts()
+  }, [loadSubAccounts])
 
   const handleStart = async () => {
     setActionLoading(true)
@@ -37,6 +63,26 @@ export default function HomePage() {
     await deleteProfile()
     setDeleteOpen(false)
     navigate('/')
+  }
+
+  const handleSubStart = async (id: string) => {
+    try {
+      await api.startGateway(id)
+      toast(`Gateway '${id}' started`)
+      loadSubAccounts()
+    } catch (e: any) {
+      toast(e.message, 'error')
+    }
+  }
+
+  const handleSubStop = async (id: string) => {
+    try {
+      await api.stopGateway(id)
+      toast(`Gateway '${id}' stopped`)
+      loadSubAccounts()
+    } catch (e: any) {
+      toast(e.message, 'error')
+    }
   }
 
   if (loading) {
@@ -68,6 +114,19 @@ export default function HomePage() {
           <h3 className="text-sm font-semibold text-white mb-4">Profile Info</h3>
           <dl className="space-y-3 text-xs">
             <InfoRow label="ID" value={profileId} />
+            {parentId && (
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Parent</dt>
+                <dd>
+                  <Link
+                    to={`/profile/${parentId}`}
+                    className="text-accent hover:text-accent-light transition-colors"
+                  >
+                    {parentId}
+                  </Link>
+                </dd>
+              </div>
+            )}
             <InfoRow label="Provider" value={config.provider || 'anthropic'} />
             <InfoRow label="Model" value={config.model || 'default'} />
             <InfoRow
@@ -151,6 +210,97 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Sub-Accounts section — only for parent profiles, admin only */}
+      {!parentId && isAdmin && (
+        <div className="mt-6 bg-surface rounded-xl border border-gray-700/50 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-white">
+              Sub-Accounts
+              {subAccounts.length > 0 && (
+                <span className="ml-2 text-gray-500 font-normal">({subAccounts.length})</span>
+              )}
+            </h3>
+          </div>
+
+          {subsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin w-5 h-5 border-2 border-accent border-t-transparent rounded-full" />
+            </div>
+          ) : subAccounts.length > 0 ? (
+            <div className="space-y-2">
+              {subAccounts.map((sub) => {
+                const subChannels = sub.config.channels || []
+                const shortName = sub.name
+
+                return (
+                  <div
+                    key={sub.id}
+                    className="flex items-center gap-3 py-2.5 px-3 rounded-lg bg-white/[0.02] hover:bg-white/[0.04] transition-colors"
+                  >
+                    <StatusBadge running={sub.status.running} className="shrink-0" />
+
+                    <Link
+                      to={`/profile/${sub.id}`}
+                      className="text-sm text-gray-300 hover:text-accent transition-colors truncate min-w-0 flex-1 font-medium"
+                    >
+                      {shortName}
+                    </Link>
+
+                    {sub.status.running && sub.status.uptime_secs && (
+                      <span className="text-xs text-gray-500 shrink-0">
+                        {formatUptime(sub.status.uptime_secs)}
+                      </span>
+                    )}
+
+                    {subChannels.length > 0 && (
+                      <div className="flex gap-1 shrink-0">
+                        {subChannels.map((ch, i) => {
+                          const type = ch.type as keyof typeof CHANNEL_COLORS
+                          return (
+                            <span
+                              key={i}
+                              className={`${CHANNEL_COLORS[type] || 'bg-gray-500'} text-white text-[10px] font-bold px-1.5 py-0.5 rounded`}
+                            >
+                              {CHANNEL_LABELS[type] || ch.type.toUpperCase().slice(0, 2)}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex gap-1.5 shrink-0">
+                      {sub.status.running ? (
+                        <button
+                          onClick={() => handleSubStop(sub.id)}
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition"
+                        >
+                          Stop
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleSubStart(sub.id)}
+                          className="px-2.5 py-1 text-xs font-medium rounded-lg bg-green-500/10 text-green-400 hover:bg-green-500/20 transition"
+                        >
+                          Start
+                        </button>
+                      )}
+                      <Link
+                        to={`/profile/${sub.id}`}
+                        className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white transition"
+                      >
+                        Configure
+                      </Link>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 py-4 text-center">No sub-accounts</p>
+          )}
+        </div>
+      )}
+
       <ConfirmDialog
         open={deleteOpen}
         title="Delete Profile"
@@ -171,4 +321,14 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <dd className="text-gray-300">{value}</dd>
     </div>
   )
+}
+
+function formatUptime(secs: number | null): string {
+  if (!secs) return ''
+  const days = Math.floor(secs / 86400)
+  const hours = Math.floor((secs % 86400) / 3600)
+  const mins = Math.floor((secs % 3600) / 60)
+  if (days > 0) return `${days}d ${hours}h`
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
 }

@@ -1312,13 +1312,13 @@ impl Tool for ListSubAccountsTool {
                         .unwrap_or_default();
 
                     let channels = item
-                        .get("channels")
+                        .get("config")
+                        .and_then(|c| c.get("channels"))
                         .and_then(|v| v.as_array())
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|c| {
-                                    c.as_object()
-                                        .and_then(|o| o.keys().next().map(|k| k.as_str()))
+                                    c.get("type").and_then(|t| t.as_str())
                                 })
                                 .collect::<Vec<_>>()
                                 .join(", ")

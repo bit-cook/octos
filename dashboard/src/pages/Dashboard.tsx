@@ -4,18 +4,36 @@ import { useToast } from '../components/Toast'
 import { useAuth } from '../contexts/AuthContext'
 import ProfileCard from '../components/ProfileCard'
 import { api } from '../api'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import type { ProfileResponse } from '../types'
 
 export default function Dashboard() {
   const { isAdmin } = useAuth()
   const { data, error, loading, refresh } = useOverview()
+  const { toast } = useToast()
+  const [actionLoading, setActionLoading] = useState(false)
+
+  // Partition profiles into parents and sub-accounts (must be before early returns)
+  const { parentProfiles, subAccountMap, totalSubAccounts } = useMemo(() => {
+    const all = data?.profiles || []
+    const parents = all.filter(p => !p.parent_id)
+    const map = new Map<string, ProfileResponse[]>()
+    let subCount = 0
+    for (const p of all) {
+      if (p.parent_id) {
+        subCount++
+        const subs = map.get(p.parent_id) || []
+        subs.push(p)
+        map.set(p.parent_id, subs)
+      }
+    }
+    return { parentProfiles: parents, subAccountMap: map, totalSubAccounts: subCount }
+  }, [data?.profiles])
 
   // Non-admins go straight to their profile
   if (!isAdmin) {
     return <Navigate to="/my" replace />
   }
-  const { toast } = useToast()
-  const [actionLoading, setActionLoading] = useState(false)
 
   const handleStart = async (id: string) => {
     try {
@@ -92,7 +110,10 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {data?.total_profiles || 0} profiles
+            {parentProfiles.length} profiles
+            {totalSubAccounts > 0 && (
+              <span className="text-gray-600 ml-1">({totalSubAccounts} sub-accounts)</span>
+            )}
             {data && data.running > 0 && (
               <span className="text-green-400 ml-2">{data.running} running</span>
             )}
@@ -127,12 +148,13 @@ export default function Dashboard() {
       </div>
 
       {/* Profile grid */}
-      {data && data.profiles.length > 0 ? (
+      {parentProfiles.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {data.profiles.map((p) => (
+          {parentProfiles.map((p) => (
             <ProfileCard
               key={p.id}
               profile={p}
+              subAccounts={subAccountMap.get(p.id)}
               onStart={handleStart}
               onStop={handleStop}
             />

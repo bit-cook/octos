@@ -1149,9 +1149,8 @@ pub async fn toggle_watchdog(
     if let Some(ref flag) = state.watchdog_enabled {
         flag.store(req.enabled, std::sync::atomic::Ordering::Relaxed);
     }
-    let status = if req.enabled { "enabled" } else { "disabled" };
     Ok(Json(
-        serde_json::json!({ "ok": true, "message": format!("Watchdog {status}") }),
+        serde_json::json!({ "ok": true, "watchdog_enabled": req.enabled }),
     ))
 }
 
@@ -1163,8 +1162,7 @@ pub async fn toggle_alerts(
     if let Some(ref flag) = state.alerts_enabled {
         flag.store(req.enabled, std::sync::atomic::Ordering::Relaxed);
     }
-    let status = if req.enabled { "enabled" } else { "disabled" };
     Ok(Json(
-        serde_json::json!({ "ok": true, "message": format!("Alerts {status}") }),
+        serde_json::json!({ "ok": true, "alerts_enabled": req.enabled }),
     ))
 }

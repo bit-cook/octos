@@ -118,6 +118,16 @@ export const api = {
   providerMetrics: (id: string) =>
     request<SharedMetrics | null>(`/profiles/${id}/metrics`),
 
+  // Sub-account management
+  listSubAccounts: (parentId: string) =>
+    request<ProfileResponse[]>(`/profiles/${parentId}/accounts`),
+
+  createSubAccount: (parentId: string, data: { name: string; channels?: any[]; system_prompt?: string; env_vars?: Record<string, string> }) =>
+    request<ProfileResponse>(`/profiles/${parentId}/accounts`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   // User management (admin)
   listUsers: () => request<{ users: User[] }>('/users'),
 

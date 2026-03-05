@@ -1066,6 +1066,60 @@ impl GatewayCommand {
 
             let cmd = inbound.content.trim();
 
+            // Handle callback queries (inline keyboard button presses)
+            if inbound
+                .metadata
+                .get("callback_query")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                let callback_data = inbound
+                    .metadata
+                    .get("callback_data")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let callback_message_id = inbound
+                    .metadata
+                    .get("callback_message_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                // Session switch callback: "s:topic" or "s:" for default
+                if let Some(topic) = callback_data.strip_prefix("s:") {
+                    active_sessions
+                        .lock()
+                        .await
+                        .switch_to(&base_key_str, topic)
+                        .unwrap_or_else(|e| warn!("switch_to failed: {e}"));
+
+                    // Rebuild keyboard with updated active marker
+                    let entries = session_mgr
+                        .lock()
+                        .await
+                        .list_sessions_for_chat(&base_key_str);
+                    let keyboard = build_session_keyboard(&entries, topic);
+                    let text = build_session_text(&entries, topic);
+
+                    // Edit the picker message in-place
+                    if let Some(ref mid) = callback_message_id {
+                        if let Some(ch) = channel_mgr.get_channel(&reply_channel) {
+                            if let Err(e) = ch
+                                .edit_message_with_metadata(
+                                    &reply_chat_id, mid, &text, &keyboard,
+                                )
+                                .await
+                            {
+                                warn!("failed to edit session picker: {e}");
+                            }
+                        }
+                    }
+
+                    let label = if topic.is_empty() { "(default)" } else { topic };
+                    info!(session = %label, "session switched via inline keyboard");
+                }
+                continue;
+            }
+
             // Handle /new command — clear current session or create named session
             if cmd == "/new" || cmd.starts_with("/new ") {
                 let name = cmd.strip_prefix("/new").unwrap_or("").trim();
@@ -1191,7 +1245,7 @@ impl GatewayCommand {
                 continue;
             }
 
-            // Handle /sessions command — list all sessions for this chat
+            // Handle /sessions command — list all sessions with inline keyboard
             if cmd == "/sessions" {
                 let entries = session_mgr
                     .lock()
@@ -1207,48 +1261,22 @@ impl GatewayCommand {
                     let msg = OutboundMessage {
                         channel: reply_channel.clone(),
                         chat_id: reply_chat_id.clone(),
-                        content: "No sessions found.".to_string(),
+                        content: "No sessions found. Use /new <name> to create one.".to_string(),
                         reply_to: None,
                         media: vec![],
                         metadata: serde_json::json!({}),
                     };
                     let _ = agent_handle.send_outbound(msg).await;
                 } else {
-                    let mut lines = format!("{} session(s):\n\n", entries.len());
-                    for entry in &entries {
-                        let name = entry
-                            .topic
-                            .as_deref()
-                            .unwrap_or("(default)");
-                        let is_active = match &entry.topic {
-                            Some(t) => t == &active_topic,
-                            None => active_topic.is_empty(),
-                        };
-                        let marker = if is_active { " *" } else { "" };
-                        let summary = entry
-                            .summary
-                            .as_deref()
-                            .unwrap_or("");
-                        let time = entry
-                            .updated_at
-                            .format("%m/%d %H:%M")
-                            .to_string();
-                        lines.push_str(&format!(
-                            "{name}{marker}  ({} msgs, {time})",
-                            entry.message_count,
-                        ));
-                        if !summary.is_empty() {
-                            lines.push_str(&format!(" - {summary}"));
-                        }
-                        lines.push('\n');
-                    }
+                    let keyboard = build_session_keyboard(&entries, &active_topic);
+                    let text = build_session_text(&entries, &active_topic);
                     let msg = OutboundMessage {
                         channel: reply_channel.clone(),
                         chat_id: reply_chat_id.clone(),
-                        content: lines,
+                        content: text,
                         reply_to: None,
                         media: vec![],
-                        metadata: serde_json::json!({}),
+                        metadata: keyboard,
                     };
                     let _ = agent_handle.send_outbound(msg).await;
                 }
@@ -1728,6 +1756,95 @@ fn strip_think_tags(s: &str) -> String {
         }
     }
     result.trim().to_string()
+}
+
+/// Escape HTML special characters for Telegram's HTML parse mode.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Truncate a string to `max` chars, appending "…" if truncated.
+fn truncate_button_text(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(max - 1).collect();
+        format!("{truncated}…")
+    }
+}
+
+/// Build an inline keyboard JSON value for session selection.
+/// 2 buttons per row, active session marked with `>> name <<`.
+/// Caps at 50 sessions to stay within Telegram limits.
+fn build_session_keyboard(
+    entries: &[crew_bus::SessionListEntry],
+    active_topic: &str,
+) -> serde_json::Value {
+    let cap = entries.len().min(50);
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut row: Vec<serde_json::Value> = Vec::new();
+
+    for entry in entries.iter().take(cap) {
+        let topic = entry.topic.as_deref().unwrap_or("");
+        let display_name = if topic.is_empty() { "default" } else { topic };
+        let label = if topic == active_topic {
+            format!(">> {} <<", truncate_button_text(display_name, 14))
+        } else {
+            truncate_button_text(display_name, 18)
+        };
+        let callback_data = format!("s:{topic}");
+
+        row.push(serde_json::json!({
+            "text": label,
+            "callback_data": callback_data,
+        }));
+
+        if row.len() == 2 {
+            rows.push(serde_json::Value::Array(row));
+            row = Vec::new();
+        }
+    }
+    // Push remaining button if odd count
+    if !row.is_empty() {
+        rows.push(serde_json::Value::Array(row));
+    }
+
+    serde_json::json!({ "inline_keyboard": rows })
+}
+
+/// Build an HTML-formatted text listing sessions.
+fn build_session_text(
+    entries: &[crew_bus::SessionListEntry],
+    active_topic: &str,
+) -> String {
+    if entries.is_empty() {
+        return "No sessions yet. Send a message to start one.".to_string();
+    }
+
+    let mut lines = Vec::new();
+    lines.push("<b>Sessions</b>".to_string());
+    lines.push(String::new());
+
+    for entry in entries {
+        let topic = entry.topic.as_deref().unwrap_or("");
+        let display_name = if topic.is_empty() { "default" } else { topic };
+        let marker = if topic == active_topic { " ✦" } else { "" };
+        let summary = entry
+            .summary
+            .as_deref()
+            .unwrap_or("(no summary)");
+        let count = entry.message_count;
+        // HTML-escape user content to prevent parse errors
+        let safe_name = html_escape(display_name);
+        let safe_summary = html_escape(summary);
+        lines.push(format!(
+            "• <b>{safe_name}</b>{marker} — {count} msgs\n  <i>{safe_summary}</i>",
+        ));
+    }
+
+    lines.join("\n")
 }
 
 /// Build the system prompt with bootstrap files, memory context, and skills.

@@ -16,6 +16,7 @@ pub use metrics::init_metrics;
 pub use router::build_router;
 pub use sse::SseBroadcaster;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::otp::AuthManager;
