@@ -96,6 +96,39 @@ fn http_client() -> reqwest::blocking::Client {
         .expect("failed to build HTTP client")
 }
 
+/// Geocode a city name to coordinates.
+/// Tries without language hint first, then falls back to zh, ja, ko, ru, ar, hi.
+fn geocode(client: &reqwest::blocking::Client, city: &str) -> GeoLocation {
+    let encoded = urlencoded(city);
+    let has_non_ascii = city.bytes().any(|b| b > 127);
+
+    // For ASCII-only input, just search without language hint
+    // For non-ASCII input, try common languages that match the script
+    let langs: &[&str] = if has_non_ascii {
+        &["zh", "ja", "ko", "ru", "ar", "hi", ""]
+    } else {
+        &[""]
+    };
+
+    for lang in langs {
+        let url = if lang.is_empty() {
+            format!("https://geocoding-api.open-meteo.com/v1/search?name={encoded}&count=1")
+        } else {
+            format!("https://geocoding-api.open-meteo.com/v1/search?name={encoded}&count=1&language={lang}")
+        };
+
+        if let Ok(r) = client.get(&url).send() {
+            if let Ok(geo) = r.json::<GeoResult>() {
+                if let Some(loc) = geo.results.and_then(|r| r.into_iter().next()) {
+                    return loc;
+                }
+            }
+        }
+    }
+
+    fail(&format!("City '{}' not found. Try a different name or add country (e.g. 'Paris, France').", city));
+}
+
 fn weather_description(code: u32) -> &'static str {
     match code {
         0 => "Clear sky",
@@ -151,25 +184,7 @@ fn handle_get_weather(input_json: &str) {
     }
 
     let client = http_client();
-
-    // Geocode city name to coordinates
-    let geo_url = format!(
-        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en",
-        urlencoded(&input.city)
-    );
-
-    let geo_resp: GeoResult = match client.get(&geo_url).send() {
-        Ok(r) => match r.json() {
-            Ok(v) => v,
-            Err(e) => fail(&format!("Failed to parse geocoding response: {e}")),
-        },
-        Err(e) => fail(&format!("Geocoding request failed: {e}")),
-    };
-
-    let location = match geo_resp.results.and_then(|r| r.into_iter().next()) {
-        Some(loc) => loc,
-        None => fail(&format!("City '{}' not found. Try a different name or add country (e.g. 'Paris, France').", input.city)),
-    };
+    let location = geocode(&client, &input.city);
 
     // Fetch current weather
     let weather_url = format!(
@@ -227,25 +242,7 @@ fn handle_get_forecast(input_json: &str) {
 
     let days = input.days.clamp(1, 16);
     let client = http_client();
-
-    // Geocode
-    let geo_url = format!(
-        "https://geocoding-api.open-meteo.com/v1/search?name={}&count=1&language=en",
-        urlencoded(&input.city)
-    );
-
-    let geo_resp: GeoResult = match client.get(&geo_url).send() {
-        Ok(r) => match r.json() {
-            Ok(v) => v,
-            Err(e) => fail(&format!("Failed to parse geocoding response: {e}")),
-        },
-        Err(e) => fail(&format!("Geocoding request failed: {e}")),
-    };
-
-    let location = match geo_resp.results.and_then(|r| r.into_iter().next()) {
-        Some(loc) => loc,
-        None => fail(&format!("City '{}' not found.", input.city)),
-    };
+    let location = geocode(&client, &input.city);
 
     // Fetch daily forecast
     let url = format!(
