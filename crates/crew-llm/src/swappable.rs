@@ -13,22 +13,33 @@ use crate::config::ChatConfig;
 use crate::provider::LlmProvider;
 use crate::types::{ChatResponse, ChatStream, ToolSpec};
 
+/// Leak a `String` into a `&'static str`.
+///
+/// Used so `model_id()` / `provider_name()` can return `&str` without
+/// borrowing from behind the `RwLock`. Each swap leaks ~50 bytes — acceptable
+/// since swaps are rare, user-initiated actions.
+fn leak_str(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
 /// A provider wrapper that allows swapping the inner provider at runtime.
 ///
-/// `model_id()` and `provider_name()` return `&str`, which can't borrow from
-/// behind an `RwLock`, so we cache those values in separate `RwLock<String>`
-/// fields that are updated on each swap.
+/// `model_id()` and `provider_name()` return `&str`, which can't safely
+/// borrow from behind an `RwLock`. We solve this by leaking the cached
+/// strings into `&'static str` — since `&'static str` is `Copy`, reading
+/// it out of the `RwLock` guard doesn't require the guard to stay alive.
+/// Each swap leaks ~50 bytes, which is fine for rare user-initiated swaps.
 pub struct SwappableProvider {
     inner: RwLock<Arc<dyn LlmProvider>>,
-    cached_model_id: RwLock<String>,
-    cached_provider_name: RwLock<String>,
+    cached_model_id: RwLock<&'static str>,
+    cached_provider_name: RwLock<&'static str>,
 }
 
 impl SwappableProvider {
     /// Create a new swappable provider wrapping the given provider.
     pub fn new(provider: Arc<dyn LlmProvider>) -> Self {
-        let model_id = provider.model_id().to_string();
-        let provider_name = provider.provider_name().to_string();
+        let model_id = leak_str(provider.model_id().to_string());
+        let provider_name = leak_str(provider.provider_name().to_string());
         Self {
             inner: RwLock::new(provider),
             cached_model_id: RwLock::new(model_id),
@@ -38,8 +49,8 @@ impl SwappableProvider {
 
     /// Atomically replace the inner provider with a new one.
     pub fn swap(&self, new_provider: Arc<dyn LlmProvider>) {
-        let model_id = new_provider.model_id().to_string();
-        let provider_name = new_provider.provider_name().to_string();
+        let model_id = leak_str(new_provider.model_id().to_string());
+        let provider_name = leak_str(new_provider.provider_name().to_string());
         *self.inner.write().unwrap() = new_provider;
         *self.cached_model_id.write().unwrap() = model_id;
         *self.cached_provider_name.write().unwrap() = provider_name;
@@ -47,8 +58,8 @@ impl SwappableProvider {
 
     /// Get the current provider name and model ID as owned strings.
     pub fn provider_info(&self) -> (String, String) {
-        let name = self.cached_provider_name.read().unwrap().clone();
-        let model = self.cached_model_id.read().unwrap().clone();
+        let name = (*self.cached_provider_name.read().unwrap()).to_string();
+        let model = (*self.cached_model_id.read().unwrap()).to_string();
         (name, model)
     }
 
@@ -85,21 +96,14 @@ impl LlmProvider for SwappableProvider {
         self.inner.read().unwrap().context_window()
     }
 
-    #[allow(unsafe_code)]
     fn model_id(&self) -> &str {
-        // SAFETY: The cached string lives as long as SwappableProvider (&self).
-        // swap() replaces the String but old data is only freed after the write-lock
-        // releases. Callers use the returned &str immediately (not across swaps).
-        let guard = self.cached_model_id.read().unwrap();
-        let s: &str = &guard;
-        unsafe { &*(s as *const str) }
+        // &'static str is Copy — reading it from the guard yields a value
+        // that doesn't depend on the guard's lifetime.
+        *self.cached_model_id.read().unwrap()
     }
 
-    #[allow(unsafe_code)]
     fn provider_name(&self) -> &str {
-        let guard = self.cached_provider_name.read().unwrap();
-        let s: &str = &guard;
-        unsafe { &*(s as *const str) }
+        *self.cached_provider_name.read().unwrap()
     }
 
     fn export_metrics(&self) -> Option<serde_json::Value> {

@@ -518,10 +518,16 @@ pub(crate) fn create_provider(
     model: Option<String>,
     base_url: Option<String>,
 ) -> Result<Arc<dyn LlmProvider>> {
-    create_provider_with_api_type(name, config, model, base_url, config.api_type.as_deref())
+    let provider =
+        create_provider_with_api_type(name, config, model, base_url, config.api_type.as_deref())?;
+    println!("{}: {}", "Model".green(), provider.model_id());
+    Ok(provider)
 }
 
 /// Inner factory that accepts an explicit `api_type` override.
+///
+/// Does NOT print to stdout — callers that want a log line should print
+/// after calling this function.
 pub(crate) fn create_provider_with_api_type(
     name: &str,
     config: &Config,
@@ -579,11 +585,6 @@ pub(crate) fn create_provider_with_api_type(
             let c = llm_connect_timeout_secs.unwrap_or(crew_llm::DEFAULT_LLM_CONNECT_TIMEOUT_SECS);
             provider = provider.with_http_timeout(t, c);
         }
-        println!(
-            "{}: {} (anthropic api)",
-            "Model".green(),
-            provider.model_id()
-        );
         return Ok(Arc::new(provider));
     }
 
@@ -597,6 +598,5 @@ pub(crate) fn create_provider_with_api_type(
     };
 
     let provider = (entry.create)(params)?;
-    println!("{}: {}", "Model".green(), provider.model_id());
     Ok(provider)
 }

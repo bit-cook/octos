@@ -17,6 +17,7 @@ mod provider;
 mod retry;
 pub mod router;
 pub mod sse;
+mod swappable;
 mod types;
 pub mod vision;
 
@@ -41,6 +42,7 @@ pub use provider::{
     DEFAULT_EMBEDDING_TIMEOUT_SECS, DEFAULT_LLM_CONNECT_TIMEOUT_SECS, DEFAULT_LLM_TIMEOUT_SECS,
 };
 pub use retry::{RetryConfig, RetryProvider};
+pub use swappable::SwappableProvider;
 pub use router::{ProviderRouter, SubProviderMeta};
 pub use ominix::OminixClient;
 pub use transcription::GroqTranscriber;
