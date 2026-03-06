@@ -196,6 +196,18 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/admin/platform-skills/ominix-api/models/remove",
             post(admin::platform_models_remove),
         )
+        .route(
+            "/api/admin/platform-skills/ominix-api/models/available",
+            get(admin::platform_models_available),
+        )
+        .route(
+            "/api/admin/platform-skills/ominix-api/models/enable",
+            post(admin::platform_models_enable),
+        )
+        .route(
+            "/api/admin/platform-skills/ominix-api/models/disable",
+            post(admin::platform_models_disable),
+        )
         // System update
         .route("/api/admin/system/version", post(admin::system_version))
         .route("/api/admin/system/update", post(admin::system_update));

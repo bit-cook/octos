@@ -10,9 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use crew_agent::tools::{
-    MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry, VoiceSynthesizeTool,
-};
+use crew_agent::tools::{MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry};
 use crew_agent::{Agent, AgentConfig, HookContext, HookExecutor, TokenTracker};
 use crew_bus::{ActiveSessionStore, SessionManager};
 use crew_core::AgentId;
@@ -275,8 +273,6 @@ pub struct ActorFactory {
     pub provider_router: Option<Arc<ProviderRouter>>,
     /// Optional embedder for episodic memory recall.
     pub embedder: Option<Arc<dyn EmbeddingProvider>>,
-    /// OminiX client for TTS (if available).
-    pub ominix_client: Option<Arc<crew_llm::OminixClient>>,
     /// Active session store — used to check if a session is currently active.
     pub active_sessions: Arc<Mutex<ActiveSessionStore>>,
     /// Pending message buffer — replies from inactive sessions are held here.
@@ -342,17 +338,6 @@ impl ActorFactory {
         let mut tools = self.tool_registry_factory.create_base_registry();
         tools.register(message_tool);
         tools.register(send_file_tool);
-
-        // Voice synthesize tool (if OminiX TTS is available)
-        if let Some(ref ominix) = self.ominix_client {
-            let tts_tool = VoiceSynthesizeTool::with_context(
-                ominix.clone(),
-                proxy_tx.clone(),
-                channel,
-                chat_id,
-            );
-            tools.register(tts_tool);
-        }
 
         // Spawn tool (per-session context, fully configured)
         let mut spawn_tool = SpawnTool::with_context(

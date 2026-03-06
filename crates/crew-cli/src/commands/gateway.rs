@@ -15,8 +15,8 @@ use crew_bus::{
 };
 use crew_core::{OutboundMessage, SessionKey};
 use crew_llm::{
-    AdaptiveConfig, AdaptiveRouter, GroqTranscriber, LlmProvider, OminixClient, ProviderChain,
-    ProviderRouter, RetryProvider, SwappableProvider, Transcriber,
+    AdaptiveConfig, AdaptiveRouter, LlmProvider, ProviderChain, ProviderRouter, RetryProvider,
+    SwappableProvider,
 };
 use crew_memory::{EpisodeStore, MemoryStore};
 use eyre::{Result, WrapErr};
@@ -295,34 +295,7 @@ impl GatewayCommand {
         let media_dir = data_dir.join("media");
         let _ = &media_dir; // used by channel feature gates below
 
-        // Create voice transcriber: prefer OminiX (local), fall back to Groq (cloud)
-        // OminiX API URL is platform-wide via OMINIX_API_URL env var (set by crew serve)
         let voice_config = config.voice.clone();
-        let ominix_client: Option<Arc<OminixClient>> = {
-            let api_url = std::env::var("OMINIX_API_URL").ok();
-            if let Some(ref url) = api_url {
-                let client = OminixClient::new(url)
-                    .with_language(voice_config.as_ref().and_then(|vc| vc.asr_language.clone()));
-                if client.health().await {
-                    println!("{}: OminiX ({})", "Transcriber".green(), url);
-                    Some(Arc::new(client))
-                } else {
-                    warn!("OminiX API not reachable at {url}");
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        let transcriber: Option<Arc<dyn Transcriber>> = if let Some(ref oc) = ominix_client {
-            Some(oc.clone() as Arc<dyn Transcriber>)
-        } else {
-            std::env::var("GROQ_API_KEY").ok().map(|key| {
-                println!("{}: Groq Whisper", "Transcriber".green());
-                Arc::new(GroqTranscriber::new(key)) as Arc<dyn Transcriber>
-            })
-        };
 
         eprintln!("[gateway] opening episode store at {}", data_dir.display());
         let memory = Arc::new(
@@ -354,12 +327,23 @@ impl GatewayCommand {
             info!(count = n, "bootstrapped platform skills");
         }
 
-        // Log voice API status
-        if ominix_client.is_some() {
-            let url = std::env::var("OMINIX_API_URL")
-                .unwrap_or_else(|_| "http://localhost:8080".to_string());
+        // Voice transcription via asr platform skill binary (after bootstrap)
+        let asr_binary_path = project_dir
+            .join(crew_agent::bootstrap::PLATFORM_SKILLS_DIR)
+            .join("asr")
+            .join("main");
+        let has_asr = asr_binary_path.exists() && std::env::var("OMINIX_API_URL").is_ok();
+        let asr_binary = if has_asr {
+            let url = std::env::var("OMINIX_API_URL").unwrap_or_default();
+            println!("{}: asr platform skill ({})", "Transcriber".green(), url);
             println!("{}: {} ({})", "Voice".green(), "enabled".green(), url);
-        }
+            Some(asr_binary_path)
+        } else {
+            None
+        };
+        let asr_language = voice_config
+            .as_ref()
+            .and_then(|vc| vc.asr_language.clone());
 
         // Collect extra skills dirs: parent profile (for sub-accounts) + global
         let mut extra_skills_dirs: Vec<PathBuf> = Vec::new();
@@ -471,7 +455,15 @@ impl GatewayCommand {
             tools.register(crew_agent::RecallMemoryTool::new(memory_store.clone()));
             tools.register(crew_agent::SaveMemoryTool::new(memory_store.clone()));
 
-            info!("admin mode: registered admin API + shell + memory tools");
+            // Load plugins (send_email, etc.)
+            let plugin_dirs = crate::config::Config::plugin_dirs(&cwd);
+            if !plugin_dirs.is_empty() {
+                if let Err(e) = crew_agent::PluginLoader::load_into(&mut tools, &plugin_dirs) {
+                    warn!("plugin loading failed: {e}");
+                }
+            }
+
+            info!("admin mode: registered admin API + shell + memory + plugin tools");
         } else {
             // Normal mode: full tool registration
             let sandbox = crew_agent::create_sandbox(&config.sandbox);
@@ -574,14 +566,6 @@ impl GatewayCommand {
             tools.register(crew_agent::SynthesizeResearchTool::new(
                 llm.clone(),
                 data_dir.clone(),
-            ));
-
-            // Deep research pipeline (shared, no per-session state)
-            tools.register(crew_agent::DeepResearchTool::new(
-                llm.clone(),
-                cwd.clone(),
-                data_dir.clone(),
-                plugin_dirs.clone(),
             ));
 
             // Pipeline tool factory for per-session instances
@@ -750,7 +734,6 @@ impl GatewayCommand {
             worker_prompt: worker_prompt_for_factory,
             provider_router: provider_router_for_factory,
             embedder: create_embedder(&config).map(|e| e as Arc<dyn crew_llm::EmbeddingProvider>),
-            ominix_client: ominix_client.clone(),
             active_sessions: active_sessions.clone(),
             pending_messages: pending_messages.clone(),
         };
@@ -1155,7 +1138,7 @@ impl GatewayCommand {
             // Transcribe audio media and separate images (stays on main task)
             let mut image_media = Vec::new();
             let mut is_voice_message = false;
-            if let Some(ref transcriber) = transcriber {
+            if let Some(ref asr_bin) = asr_binary {
                 for path in &inbound.media {
                     if crew_bus::media::is_audio(path) {
                         is_voice_message = true;
@@ -1163,7 +1146,11 @@ impl GatewayCommand {
                         if let Some(ch) = channel_mgr.get_channel(&inbound.channel) {
                             let _ = ch.send_listening(&inbound.chat_id).await;
                         }
-                        match transcriber.transcribe(std::path::Path::new(path)).await {
+                        let mut input = serde_json::json!({"audio_path": path});
+                        if let Some(ref lang) = asr_language {
+                            input["language"] = serde_json::Value::String(lang.clone());
+                        }
+                        match transcribe_via_skill(asr_bin, &input.to_string()).await {
                             Ok(text) => {
                                 // Store transcript in metadata for status indicator display
                                 if let Some(obj) = inbound.metadata.as_object_mut() {
@@ -2292,5 +2279,44 @@ async fn handle_skills_command(
         other => format!(
             "Unknown /skills subcommand: {other}\nUsage:\n  /skills — list installed skills\n  /skills install <user/repo> — install from GitHub\n  /skills remove <name> — remove a skill"
         ),
+    }
+}
+
+/// Transcribe audio by spawning the asr platform skill binary.
+async fn transcribe_via_skill(
+    asr_binary: &std::path::Path,
+    input_json: &str,
+) -> eyre::Result<String> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new(asr_binary)
+        .arg("voice_transcribe")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .wrap_err("failed to spawn asr skill binary")?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input_json.as_bytes()).await?;
+        drop(stdin);
+    }
+
+    let output = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
+        .await
+        .map_err(|_| eyre::eyre!("asr transcription timed out"))??;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let result: serde_json::Value =
+        serde_json::from_str(&stdout).wrap_err("invalid asr skill output")?;
+
+    if result.get("success").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(result["output"]
+            .as_str()
+            .unwrap_or("")
+            .to_string())
+    } else {
+        let msg = result["output"].as_str().unwrap_or("unknown error");
+        eyre::bail!("asr skill failed: {msg}")
     }
 }

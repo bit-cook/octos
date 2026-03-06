@@ -242,7 +242,6 @@ pub use policy::ToolPolicy;
 pub mod ssrf;
 
 // Built-in tools
-pub mod deep_research_pipeline;
 pub mod deep_search;
 pub mod diff_edit;
 pub mod edit_file;
@@ -260,7 +259,6 @@ pub(crate) mod site_crawl;
 pub mod spawn;
 pub mod synthesize_research;
 pub mod take_photo;
-pub mod voice_synthesize;
 pub mod web_fetch;
 pub mod web_search;
 pub mod write_file;
@@ -275,7 +273,6 @@ pub mod git;
 #[cfg(feature = "ast")]
 pub mod code_structure;
 
-pub use deep_research_pipeline::DeepResearchTool;
 pub use deep_search::DeepSearchTool;
 pub use diff_edit::DiffEditTool;
 pub use edit_file::EditFileTool;
@@ -291,7 +288,6 @@ pub use shell::ShellTool;
 pub use spawn::SpawnTool;
 pub use synthesize_research::SynthesizeResearchTool;
 pub use take_photo::TakePhotoTool;
-pub use voice_synthesize::VoiceSynthesizeTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 pub use write_file::WriteFileTool;

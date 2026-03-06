@@ -494,7 +494,7 @@ mod tests {
         let request = provider.build_request(&messages, &[], &config);
 
         // System message should be extracted, not in messages array
-        assert_eq!(request.system, Some("system prompt"));
+        assert_eq!(request.system, Some("system prompt".to_string()));
         assert_eq!(request.messages.len(), 2); // user + assistant only
         assert_eq!(request.messages[0].role, "user");
         assert_eq!(request.messages[1].role, "assistant");

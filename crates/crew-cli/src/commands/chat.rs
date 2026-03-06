@@ -233,14 +233,6 @@ impl ChatCommand {
             }
         }
 
-        // Deep research pipeline (parallel multi-angle search + map-reduce synthesis)
-        tools.register(crew_agent::DeepResearchTool::new(
-            llm.clone(),
-            cwd.clone(),
-            data_dir.clone(),
-            plugin_dirs.clone(),
-        ));
-
         // Pipeline tool (DOT-based multi-step workflows, with plugin access)
         let pipeline_tool = crew_pipeline::RunPipelineTool::new(
             llm.clone(),
