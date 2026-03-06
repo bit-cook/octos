@@ -236,10 +236,8 @@ fn slugify(s: &str) -> String {
     for ch in s.chars().take(60) {
         if ch.is_alphanumeric() {
             slug.push(ch.to_ascii_lowercase());
-        } else if ch == ' ' || ch == '-' || ch == '_' {
-            if !slug.ends_with('-') {
-                slug.push('-');
-            }
+        } else if (ch == ' ' || ch == '-' || ch == '_') && !slug.ends_with('-') {
+            slug.push('-');
         }
     }
     slug.trim_matches('-').to_string()

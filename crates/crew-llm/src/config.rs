@@ -44,3 +44,76 @@ pub enum ToolChoice {
     /// Model must use a specific tool.
     Specific { name: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_config_defaults() {
+        let config = ChatConfig::default();
+        assert_eq!(config.max_tokens, Some(4096));
+        assert_eq!(config.temperature, Some(0.0));
+        assert!(matches!(config.tool_choice, ToolChoice::Auto));
+        assert!(config.stop_sequences.is_empty());
+    }
+
+    #[test]
+    fn test_tool_choice_default_is_auto() {
+        let choice = ToolChoice::default();
+        assert!(matches!(choice, ToolChoice::Auto));
+    }
+
+    #[test]
+    fn test_chat_config_serde_roundtrip() {
+        let config = ChatConfig {
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            tool_choice: ToolChoice::Required,
+            stop_sequences: vec!["STOP".to_string()],
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ChatConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.max_tokens, Some(2048));
+        assert_eq!(deserialized.temperature, Some(0.7));
+        assert!(matches!(deserialized.tool_choice, ToolChoice::Required));
+        assert_eq!(deserialized.stop_sequences, vec!["STOP"]);
+    }
+
+    #[test]
+    fn test_chat_config_skip_serializing_none() {
+        let config = ChatConfig {
+            max_tokens: None,
+            temperature: None,
+            tool_choice: ToolChoice::Auto,
+            stop_sequences: vec![],
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert!(json.get("max_tokens").is_none());
+        assert!(json.get("temperature").is_none());
+        assert!(json.get("stop_sequences").is_none());
+    }
+
+    #[test]
+    fn test_tool_choice_specific_serde() {
+        let choice = ToolChoice::Specific {
+            name: "search".to_string(),
+        };
+        let json = serde_json::to_value(&choice).unwrap();
+        // Externally tagged enum: {"specific": {"name": "search"}}
+        assert_eq!(json["specific"]["name"], "search");
+        let deserialized: ToolChoice = serde_json::from_value(json).unwrap();
+        match deserialized {
+            ToolChoice::Specific { name } => assert_eq!(name, "search"),
+            _ => panic!("expected Specific"),
+        }
+    }
+
+    #[test]
+    fn test_tool_choice_none_serde() {
+        let choice = ToolChoice::None;
+        let json = serde_json::to_value(&choice).unwrap();
+        let deserialized: ToolChoice = serde_json::from_value(json).unwrap();
+        assert!(matches!(deserialized, ToolChoice::None));
+    }
+}

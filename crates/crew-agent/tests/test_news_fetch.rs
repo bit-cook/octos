@@ -84,7 +84,95 @@ fn extract_text_fallback(html: &str) -> String {
     r.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decode_xml_entities() {
+        assert_eq!(decode_xml_entities("&amp;"), "&");
+        assert_eq!(decode_xml_entities("&lt;b&gt;"), "<b>");
+        assert_eq!(decode_xml_entities("&quot;hi&quot;"), "\"hi\"");
+        assert_eq!(decode_xml_entities("&#39;test&#39;"), "'test'");
+        assert_eq!(decode_xml_entities("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_decode_xml_entities_cdata() {
+        assert_eq!(
+            decode_xml_entities("<![CDATA[some content]]>"),
+            "some content"
+        );
+    }
+
+    #[test]
+    fn test_extract_xml_tag() {
+        let chunk = "<title>Hello World</title><link>https://example.com</link>";
+        assert_eq!(extract_xml_tag(chunk, "title"), Some("Hello World".into()));
+        assert_eq!(
+            extract_xml_tag(chunk, "link"),
+            Some("https://example.com".into())
+        );
+        assert_eq!(extract_xml_tag(chunk, "missing"), None);
+    }
+
+    #[test]
+    fn test_extract_atom_link_href() {
+        let chunk = r#"<link rel="alternate" href="https://example.com/post"/>"#;
+        assert_eq!(
+            extract_atom_link_href(chunk),
+            Some("https://example.com/post".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_atom_link_no_rel() {
+        let chunk = r#"<link href="https://example.com/feed"/>"#;
+        assert_eq!(
+            extract_atom_link_href(chunk),
+            Some("https://example.com/feed".into())
+        );
+    }
+
+    #[test]
+    fn test_strip_scripts() {
+        let html = "before<script>alert('xss')</script>after";
+        assert_eq!(strip_scripts(html), "beforeafter");
+    }
+
+    #[test]
+    fn test_strip_styles() {
+        let html = "<style>.x{}</style>content";
+        assert_eq!(strip_scripts(html), "content");
+    }
+
+    #[test]
+    fn test_strip_script_then_style() {
+        // Script before style: both stripped
+        let html = "a<script>code</script>b<style>.x{}</style>c";
+        assert_eq!(strip_scripts(html), "abc");
+    }
+
+    #[test]
+    fn test_strip_scripts_none() {
+        assert_eq!(strip_scripts("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_extract_text_fallback() {
+        let html = "<p>Hello</p><div>World</div>";
+        assert_eq!(extract_text_fallback(html), "Hello World");
+    }
+
+    #[test]
+    fn test_extract_text_fallback_nested() {
+        let html = "<div><span>Nested</span> <b>text</b></div>";
+        assert_eq!(extract_text_fallback(html), "Nested text");
+    }
+}
+
 #[tokio::test]
+#[ignore] // Network-dependent: fetches live data from Google News, HN, Substack, Medium, Yahoo
 async fn test_tech_news_discovery() {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))

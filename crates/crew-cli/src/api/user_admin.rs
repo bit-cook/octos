@@ -152,3 +152,76 @@ pub async fn delete_user(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn create_user_request_deserialize_defaults() {
+        let json = r#"{"email": "alice@example.com", "name": "Alice"}"#;
+        let req: CreateUserRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.email, "alice@example.com");
+        assert_eq!(req.name, "Alice");
+        assert!(matches!(req.role, UserRole::User));
+    }
+
+    #[test]
+    fn create_user_request_deserialize_admin_role() {
+        let json = r#"{"email": "admin@co.com", "name": "Admin", "role": "admin"}"#;
+        let req: CreateUserRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(req.role, UserRole::Admin));
+    }
+
+    #[test]
+    fn default_role_is_user() {
+        assert!(matches!(default_role(), UserRole::User));
+    }
+
+    #[test]
+    fn user_response_serialize() {
+        let resp = UserResponse {
+            user: User {
+                id: "u1".into(),
+                email: "a@b.com".into(),
+                name: "Test".into(),
+                role: UserRole::User,
+                created_at: chrono::Utc::now(),
+                last_login_at: None,
+            },
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["user"]["id"], "u1");
+        assert_eq!(json["user"]["email"], "a@b.com");
+        assert_eq!(json["user"]["name"], "Test");
+    }
+
+    #[test]
+    fn users_list_response_serialize() {
+        let resp = UsersListResponse { users: vec![] };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json["users"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn action_response_serialize_ok() {
+        let resp = ActionResponse {
+            ok: true,
+            message: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json.get("message").is_none());
+    }
+
+    #[test]
+    fn action_response_serialize_with_message() {
+        let resp = ActionResponse {
+            ok: false,
+            message: Some("not found".into()),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["message"], "not found");
+    }
+}

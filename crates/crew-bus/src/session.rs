@@ -597,8 +597,7 @@ impl ActiveSessionStore {
         let path = data_dir.join("active_sessions.json");
         let (active, previous) = if path.exists() {
             let data = std::fs::read_to_string(&path)?;
-            let stored: StoredActiveSessions =
-                serde_json::from_str(&data).unwrap_or_default();
+            let stored: StoredActiveSessions = serde_json::from_str(&data).unwrap_or_default();
             (stored.active, stored.previous)
         } else {
             (Default::default(), Default::default())
@@ -627,14 +626,9 @@ impl ActiveSessionStore {
 
     /// Switch to a new topic. Records the previous topic for /back.
     pub fn switch_to(&mut self, base_key: &str, topic: &str) -> Result<()> {
-        let prev = self
-            .active
-            .get(base_key)
-            .cloned()
-            .unwrap_or_default();
+        let prev = self.active.get(base_key).cloned().unwrap_or_default();
         self.previous.insert(base_key.to_string(), prev);
-        self.active
-            .insert(base_key.to_string(), topic.to_string());
+        self.active.insert(base_key.to_string(), topic.to_string());
         self.save()
     }
 
@@ -644,8 +638,7 @@ impl ActiveSessionStore {
         if let Some(ref topic) = prev {
             let current = self.active.get(base_key).cloned().unwrap_or_default();
             self.previous.insert(base_key.to_string(), current);
-            self.active
-                .insert(base_key.to_string(), topic.clone());
+            self.active.insert(base_key.to_string(), topic.clone());
             self.save()?;
         }
         Ok(prev)
@@ -1313,7 +1306,11 @@ mod tests {
         lines[0] = &serde_json::to_string(&meta).unwrap();
         // Need to own the string for lines[0]
         let meta_str = serde_json::to_string(&meta).unwrap();
-        let new_content = format!("{}\n{}\n", meta_str, content.lines().skip(1).collect::<Vec<_>>().join("\n"));
+        let new_content = format!(
+            "{}\n{}\n",
+            meta_str,
+            content.lines().skip(1).collect::<Vec<_>>().join("\n")
+        );
         std::fs::write(&path, new_content).unwrap();
 
         // Purge sessions older than 90 days

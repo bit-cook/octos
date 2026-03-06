@@ -407,4 +407,241 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].name, "persist");
     }
+
+    #[tokio::test]
+    async fn test_add_job_with_tz() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        let job = service
+            .add_job_with_tz(
+                "tz-job".into(),
+                CronSchedule::Cron {
+                    expr: "0 0 9 * * * *".into(),
+                },
+                CronPayload {
+                    message: "good morning".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+                Some("America/New_York".into()),
+            )
+            .unwrap();
+
+        assert_eq!(job.timezone.as_deref(), Some("America/New_York"));
+        assert!(job.state.next_run_at_ms.is_some());
+
+        let jobs = service.list_jobs();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].timezone.as_deref(), Some("America/New_York"));
+    }
+
+    #[tokio::test]
+    async fn test_add_job_with_tz_none_defaults_utc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        let job = service
+            .add_job_with_tz(
+                "utc-job".into(),
+                CronSchedule::Cron {
+                    expr: "0 0 9 * * * *".into(),
+                },
+                CronPayload {
+                    message: "msg".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+                None,
+            )
+            .unwrap();
+
+        assert!(job.timezone.is_none());
+        assert!(job.state.next_run_at_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_enable_disable_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        let job = service
+            .add_job(
+                "toggle".into(),
+                CronSchedule::Every { every_ms: 60_000 },
+                CronPayload {
+                    message: "ping".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+
+        // Disable
+        assert!(service.enable_job(&job.id, false));
+        let jobs = service.list_jobs();
+        assert!(
+            jobs.is_empty(),
+            "disabled job should not appear in list_jobs"
+        );
+
+        let all = service.list_all_jobs();
+        assert_eq!(all.len(), 1);
+        assert!(!all[0].enabled);
+        assert!(all[0].state.next_run_at_ms.is_none());
+
+        // Re-enable
+        assert!(service.enable_job(&job.id, true));
+        let jobs = service.list_jobs();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].enabled);
+        assert!(jobs[0].state.next_run_at_ms.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_enable_nonexistent_job() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        assert!(!service.enable_job("no-such-id", true));
+    }
+
+    #[tokio::test]
+    async fn test_list_all_jobs_includes_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        let j1 = service
+            .add_job(
+                "enabled-job".into(),
+                CronSchedule::Every { every_ms: 1000 },
+                CronPayload {
+                    message: "a".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+
+        let j2 = service
+            .add_job(
+                "to-disable".into(),
+                CronSchedule::Every { every_ms: 2000 },
+                CronPayload {
+                    message: "b".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+
+        service.enable_job(&j2.id, false);
+
+        let enabled = service.list_jobs();
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].id, j1.id);
+
+        let all = service.list_all_jobs();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_list_all_jobs_sorted_by_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        // Add two jobs with different intervals; shorter interval => sooner next_run
+        service
+            .add_job(
+                "later".into(),
+                CronSchedule::Every { every_ms: 100_000 },
+                CronPayload {
+                    message: "a".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+
+        service
+            .add_job(
+                "sooner".into(),
+                CronSchedule::Every { every_ms: 1_000 },
+                CronPayload {
+                    message: "b".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+
+        let all = service.list_all_jobs();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].name, "sooner");
+        assert_eq!(all[1].name, "later");
+    }
+
+    #[tokio::test]
+    async fn test_add_at_sets_delete_after_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let (service, _rx) = make_service(dir.path());
+
+        let at_job = service
+            .add_job(
+                "once".into(),
+                CronSchedule::At {
+                    at_ms: i64::MAX - 1,
+                },
+                CronPayload {
+                    message: "fire".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+        assert!(at_job.delete_after_run);
+
+        let every_job = service
+            .add_job(
+                "repeat".into(),
+                CronSchedule::Every { every_ms: 1000 },
+                CronPayload {
+                    message: "tick".into(),
+                    deliver: false,
+                    channel: None,
+                    chat_id: None,
+                },
+            )
+            .unwrap();
+        assert!(!every_job.delete_after_run);
+    }
+
+    #[test]
+    fn test_short_id_format() {
+        let id = short_id();
+        assert_eq!(id.len(), 8);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_load_store_missing_file() {
+        let result = load_store(Path::new("/tmp/nonexistent_cron_store.json"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_store_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(load_store(&path).is_none());
+    }
 }

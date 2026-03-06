@@ -93,3 +93,40 @@ pub fn build_http_client(timeout_secs: u64, connect_timeout_secs: u64) -> reqwes
         .build()
         .expect("failed to build HTTP client")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_error_body_short() {
+        let body = "Bad Request: invalid model";
+        assert_eq!(truncate_error_body(body), body);
+    }
+
+    #[test]
+    fn test_truncate_error_body_exact_200() {
+        let body = "x".repeat(200);
+        assert_eq!(truncate_error_body(&body), body);
+    }
+
+    #[test]
+    fn test_truncate_error_body_long() {
+        let body = "x".repeat(500);
+        let result = truncate_error_body(&body);
+        assert!(result.starts_with(&"x".repeat(200)));
+        assert!(result.contains("500 bytes total"));
+        assert!(result.len() < 500);
+    }
+
+    #[test]
+    fn test_truncate_error_body_empty() {
+        assert_eq!(truncate_error_body(""), "");
+    }
+
+    #[test]
+    fn test_build_http_client_succeeds() {
+        let _client = build_http_client(30, 10);
+        // Just verify it doesn't panic
+    }
+}

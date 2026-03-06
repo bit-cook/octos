@@ -290,6 +290,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_context_filter_restricts_specs() {
+        let dir = setup_test_dir();
+        let mut registry = ToolRegistry::with_builtins(dir.path());
+        let all_count = registry.specs().len();
+
+        // Only allow tools tagged "search"
+        registry.set_context_filter(vec!["search".to_string()]);
+        let specs = registry.specs();
+        let names: Vec<_> = specs.iter().map(|s| s.name.as_str()).collect();
+
+        // grep and glob have "search" tag — should be included
+        assert!(names.contains(&"grep"));
+        assert!(names.contains(&"glob"));
+        // web_search has "web" tag only — should be filtered out
+        assert!(!names.contains(&"web_search"));
+        // shell has "runtime","code" tags — should be filtered out
+        assert!(!names.contains(&"shell"));
+        // Filtered count should be less than total
+        assert!(specs.len() < all_count);
+    }
+
+    #[tokio::test]
+    async fn test_oversized_args_rejected() {
+        let dir = setup_test_dir();
+        let registry = ToolRegistry::with_builtins(dir.path());
+
+        // Create args larger than 1MB
+        let big_string = "x".repeat(1_100_000);
+        let result = registry
+            .execute("read_file", &serde_json::json!({"path": big_string}))
+            .await;
+
+        match result {
+            Err(e) => assert!(e.to_string().contains("too large")),
+            Ok(_) => panic!("should reject oversized args"),
+        }
+    }
+
+    #[test]
+    fn test_registry_retain() {
+        let dir = setup_test_dir();
+        let mut registry = ToolRegistry::with_builtins(dir.path());
+        let initial_count = registry.len();
+
+        registry.retain(|name| name == "shell" || name == "read_file");
+        assert_eq!(registry.len(), 2);
+        assert!(registry.len() < initial_count);
+
+        let specs = registry.specs();
+        let names: Vec<_> = specs.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"shell"));
+        assert!(names.contains(&"read_file"));
+    }
+
+    #[test]
+    fn test_registry_is_empty() {
+        let registry = ToolRegistry::new();
+        assert!(registry.is_empty());
+        assert_eq!(registry.len(), 0);
+    }
+
+    #[test]
+    fn test_specs_cache_invalidated_on_register() {
+        let mut registry = ToolRegistry::new();
+        let specs1 = registry.specs();
+        assert!(specs1.is_empty());
+
+        registry.register(ReadFileTool::new("/tmp"));
+        let specs2 = registry.specs();
+        assert_eq!(specs2.len(), 1);
+    }
+
+    #[tokio::test]
     async fn test_provider_policy_filters_specs() {
         let dir = setup_test_dir();
         let mut registry = ToolRegistry::with_builtins(dir.path());

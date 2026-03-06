@@ -11,7 +11,6 @@ pub mod compaction;
 pub mod config;
 pub mod config_watcher;
 pub mod cron_tool;
-pub mod tools;
 #[cfg(feature = "api")]
 pub mod monitor;
 #[cfg(feature = "api")]
@@ -21,6 +20,7 @@ pub mod persona_service;
 pub mod process_manager;
 pub mod profiles;
 pub mod status_indicator;
+pub mod tools;
 #[cfg(feature = "api")]
 pub mod updater;
 #[cfg(feature = "api")]

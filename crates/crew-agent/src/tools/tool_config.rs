@@ -437,9 +437,7 @@ impl ToolConfigStore {
             ));
 
             for field in fields {
-                let override_val = current
-                    .and_then(|m| m.get(field.key))
-                    .map(|v| format_value(v));
+                let override_val = current.and_then(|m| m.get(field.key)).map(format_value);
 
                 if let Some(ref val) = override_val {
                     out.push_str(&format!(
@@ -475,9 +473,7 @@ impl ToolConfigStore {
         let mut out = format!("{} settings:\n\n", tool);
 
         for field in fields {
-            let override_val = current
-                .and_then(|m| m.get(field.key))
-                .map(|v| format_value(v));
+            let override_val = current.and_then(|m| m.get(field.key)).map(format_value);
 
             let type_info = match &field.value_type {
                 ConfigValueType::String {

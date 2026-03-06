@@ -71,3 +71,134 @@ fn event_to_json(event: &ProgressEvent) -> serde_json::Value {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn event_to_json_tool_started() {
+        let event = ProgressEvent::ToolStarted {
+            name: "shell".into(),
+            tool_id: "t1".into(),
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "tool_start");
+        assert_eq!(json["tool"], "shell");
+    }
+
+    #[test]
+    fn event_to_json_tool_completed() {
+        let event = ProgressEvent::ToolCompleted {
+            name: "read_file".into(),
+            tool_id: "t2".into(),
+            success: true,
+            output_preview: "contents".into(),
+            duration: Duration::from_millis(42),
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "tool_end");
+        assert_eq!(json["tool"], "read_file");
+        assert_eq!(json["success"], true);
+    }
+
+    #[test]
+    fn event_to_json_tool_completed_failure() {
+        let event = ProgressEvent::ToolCompleted {
+            name: "shell".into(),
+            tool_id: "t3".into(),
+            success: false,
+            output_preview: "error".into(),
+            duration: Duration::from_secs(1),
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["success"], false);
+    }
+
+    #[test]
+    fn event_to_json_stream_chunk() {
+        let event = ProgressEvent::StreamChunk {
+            text: "Hello".into(),
+            iteration: 1,
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "token");
+        assert_eq!(json["text"], "Hello");
+    }
+
+    #[test]
+    fn event_to_json_stream_done() {
+        let event = ProgressEvent::StreamDone { iteration: 2 };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "stream_end");
+    }
+
+    #[test]
+    fn event_to_json_cost_update() {
+        let event = ProgressEvent::CostUpdate {
+            session_input_tokens: 100,
+            session_output_tokens: 50,
+            response_cost: Some(0.001),
+            session_cost: Some(0.005),
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "cost_update");
+        assert_eq!(json["input_tokens"], 100);
+        assert_eq!(json["output_tokens"], 50);
+        assert_eq!(json["session_cost"], 0.005);
+    }
+
+    #[test]
+    fn event_to_json_cost_update_no_cost() {
+        let event = ProgressEvent::CostUpdate {
+            session_input_tokens: 200,
+            session_output_tokens: 100,
+            response_cost: None,
+            session_cost: None,
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "cost_update");
+        assert!(json["session_cost"].is_null());
+    }
+
+    #[test]
+    fn event_to_json_thinking() {
+        let event = ProgressEvent::Thinking { iteration: 3 };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "thinking");
+        assert_eq!(json["iteration"], 3);
+    }
+
+    #[test]
+    fn event_to_json_response() {
+        let event = ProgressEvent::Response {
+            content: "answer".into(),
+            iteration: 1,
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "response");
+        assert_eq!(json["iteration"], 1);
+    }
+
+    #[test]
+    fn event_to_json_unmapped_returns_other() {
+        let event = ProgressEvent::TaskStarted {
+            task_id: "abc".into(),
+        };
+        let json = event_to_json(&event);
+        assert_eq!(json["type"], "other");
+    }
+
+    #[test]
+    fn broadcaster_subscribe_receives_events() {
+        let broadcaster = SseBroadcaster::new(16);
+        let mut rx = broadcaster.subscribe();
+
+        broadcaster.report(ProgressEvent::Thinking { iteration: 1 });
+
+        let msg = rx.try_recv().unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap();
+        assert_eq!(parsed["type"], "thinking");
+    }
+}

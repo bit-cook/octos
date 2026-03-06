@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{ChannelEntry, Config, FallbackModel, GatewayConfig, QueueMode};
+use crate::config::{ChannelEntry, Config, FallbackModel, GatewayConfig};
 
 /// A user profile with all configuration needed to run a gateway.
 #[derive(Debug, Clone, Serialize, Deserialize)]

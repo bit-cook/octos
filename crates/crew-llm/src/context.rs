@@ -106,10 +106,39 @@ mod tests {
 
     #[test]
     fn test_estimate_message_tokens() {
-        // estimate_message_tokens uses content + tool_calls + 4 overhead
-        let content = "Hello, how are you today?";
-        let expected_min = estimate_tokens(content) + 4;
-        // Create a minimal message-like check via the public function
-        assert!(expected_min > 4);
+        let msg = Message {
+            role: crew_core::MessageRole::User,
+            content: "Hello, how are you today?".to_string(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        };
+        let tokens = estimate_message_tokens(&msg);
+        // Should be content tokens + 4 overhead
+        assert_eq!(tokens, estimate_tokens("Hello, how are you today?") + 4);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_with_tool_calls() {
+        let msg = Message {
+            role: crew_core::MessageRole::Assistant,
+            content: String::new(),
+            media: vec![],
+            tool_calls: Some(vec![crew_core::ToolCall {
+                id: "tc1".to_string(),
+                name: "read_file".to_string(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+                metadata: None,
+            }]),
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        };
+        let tokens = estimate_message_tokens(&msg);
+        // Should include tool name + arguments + overhead
+        assert!(tokens > 4);
+        assert!(tokens > estimate_tokens("read_file"));
     }
 }

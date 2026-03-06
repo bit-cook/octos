@@ -123,7 +123,9 @@ impl ChannelManager {
             tokio::spawn(async move {
                 let name = ch.name().to_string();
                 match ch.start(tx).await {
-                    Ok(()) => warn!(channel = %name, "Channel listener exited cleanly (may need restart)"),
+                    Ok(()) => {
+                        warn!(channel = %name, "Channel listener exited cleanly (may need restart)")
+                    }
                     Err(e) => error!(channel = %name, "Channel stopped with error: {e}"),
                 }
             });
@@ -201,7 +203,10 @@ impl ChannelManager {
         if errors.is_empty() {
             Ok(())
         } else {
-            Err(eyre::eyre!("failed to stop channels: {}", errors.join(", ")))
+            Err(eyre::eyre!(
+                "failed to stop channels: {}",
+                errors.join(", ")
+            ))
         }
     }
 }
@@ -286,6 +291,81 @@ mod tests {
         let messages = sent.lock().await;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0], "hello from agent");
+    }
+
+    #[test]
+    fn test_default_is_allowed() {
+        let ch = MockChannel::new("test");
+        assert!(ch.is_allowed("anyone"));
+        assert!(ch.is_allowed(""));
+    }
+
+    #[test]
+    fn test_default_max_message_length() {
+        let ch = MockChannel::new("test");
+        assert_eq!(ch.max_message_length(), 4000);
+    }
+
+    #[tokio::test]
+    async fn test_default_stop() {
+        let ch = MockChannel::new("test");
+        assert!(ch.stop().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_default_send_typing() {
+        let ch = MockChannel::new("test");
+        assert!(ch.send_typing("chat1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_default_edit_message() {
+        let ch = MockChannel::new("test");
+        assert!(
+            ch.edit_message("chat1", "msg1", "new content")
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_default_delete_message() {
+        let ch = MockChannel::new("test");
+        assert!(ch.delete_message("chat1", "msg1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_send_with_id_returns_none() {
+        let ch = MockChannel::new("test");
+        let msg = OutboundMessage {
+            channel: "test".into(),
+            chat_id: "c1".into(),
+            content: "hello".into(),
+            reply_to: None,
+            media: vec![],
+            metadata: serde_json::json!({}),
+        };
+        let result = ch.send_with_id(&msg).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_channel_found() {
+        let mut mgr = ChannelManager::new();
+        mgr.register(Arc::new(MockChannel::new("ch1")));
+        assert!(mgr.get_channel("ch1").is_some());
+    }
+
+    #[test]
+    fn test_get_channel_not_found() {
+        let mgr = ChannelManager::new();
+        assert!(mgr.get_channel("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_channel_manager_default() {
+        let mgr = ChannelManager::default();
+        assert!(mgr.channels.is_empty());
     }
 
     #[tokio::test]

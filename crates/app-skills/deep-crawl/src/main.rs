@@ -197,15 +197,12 @@ async fn get_ws_url(port: u16) -> Result<String, String> {
             ));
         }
 
-        match reqwest::get(&url).await {
-            Ok(resp) => {
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
-                    if let Some(ws_url) = body["webSocketDebuggerUrl"].as_str() {
-                        return Ok(ws_url.to_string());
-                    }
+        if let Ok(resp) = reqwest::get(&url).await {
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Some(ws_url) = body["webSocketDebuggerUrl"].as_str() {
+                    return Ok(ws_url.to_string());
                 }
             }
-            Err(_) => {}
         }
 
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -233,7 +230,7 @@ async fn cdp_send(
         "params": params,
     });
 
-    ws.send(Message::Text(msg.to_string().into()))
+    ws.send(Message::Text(msg.to_string()))
         .await
         .map_err(|e| format!("CDP send error: {e}"))?;
 
@@ -321,7 +318,7 @@ async fn cdp_session_send(
         "params": params,
     });
 
-    ws.send(Message::Text(msg.to_string().into()))
+    ws.send(Message::Text(msg.to_string()))
         .await
         .map_err(|e| format!("CDP send error: {e}"))?;
 

@@ -239,3 +239,104 @@ pub async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResponse> 
         agent_configured: state.agent.is_some(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_request_deserialize() {
+        let json = r#"{"message": "hello"}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.message, "hello");
+        assert!(req.session_id.is_none());
+    }
+
+    #[test]
+    fn chat_request_with_session() {
+        let json = r#"{"message": "hi", "session_id": "s1"}"#;
+        let req: ChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.message, "hi");
+        assert_eq!(req.session_id.as_deref(), Some("s1"));
+    }
+
+    #[test]
+    fn chat_response_serialize() {
+        let resp = ChatResponse {
+            content: "world".into(),
+            input_tokens: 10,
+            output_tokens: 5,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["content"], "world");
+        assert_eq!(json["input_tokens"], 10);
+        assert_eq!(json["output_tokens"], 5);
+    }
+
+    #[test]
+    fn session_info_serialize() {
+        let info = SessionInfo {
+            id: "test-session".into(),
+            message_count: 42,
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["id"], "test-session");
+        assert_eq!(json["message_count"], 42);
+    }
+
+    #[test]
+    fn message_info_serialize() {
+        let info = MessageInfo {
+            role: "user".into(),
+            content: "hello".into(),
+            timestamp: "2025-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_value(&info).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"], "hello");
+        assert_eq!(json["timestamp"], "2025-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn status_response_serialize() {
+        let resp = StatusResponse {
+            version: "0.1.0".into(),
+            model: "gpt-4".into(),
+            provider: "openai".into(),
+            uptime_secs: 120,
+            agent_configured: true,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["version"], "0.1.0");
+        assert_eq!(json["model"], "gpt-4");
+        assert_eq!(json["provider"], "openai");
+        assert_eq!(json["uptime_secs"], 120);
+        assert_eq!(json["agent_configured"], true);
+    }
+
+    #[test]
+    fn pagination_defaults() {
+        let json = r#"{}"#;
+        let params: PaginationParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.limit, 100);
+        assert_eq!(params.offset, 0);
+    }
+
+    #[test]
+    fn pagination_custom_values() {
+        let json = r#"{"limit": 50, "offset": 10}"#;
+        let params: PaginationParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.limit, 50);
+        assert_eq!(params.offset, 10);
+    }
+
+    #[test]
+    fn default_page_limit_is_100() {
+        assert_eq!(default_page_limit(), 100);
+    }
+
+    #[test]
+    fn max_message_len_is_1mb() {
+        assert_eq!(MAX_MESSAGE_LEN, 1_048_576);
+    }
+}

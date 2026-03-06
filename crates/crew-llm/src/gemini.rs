@@ -452,7 +452,7 @@ fn parts_compatible(existing: &[GeminiPart], new: &[GeminiPart]) -> bool {
         .any(|p| matches!(p, GeminiPart::Text { .. } | GeminiPart::InlineData { .. }));
 
     // Don't merge if one side has functionResponse and the other has text
-    !(existing_has_func_response && new_has_text) && !(existing_has_text && new_has_func_response)
+    !(existing_has_func_response && new_has_text || existing_has_text && new_has_func_response)
 }
 
 fn build_user_parts(msg: &Message) -> Vec<GeminiPart> {
@@ -575,6 +575,7 @@ struct GeminiStreamState {
     has_tool_calls: bool,
 }
 
+// Visible for testing
 fn map_gemini_sse(state: &mut GeminiStreamState, event: &crate::sse::SseEvent) -> Vec<StreamEvent> {
     let data: serde_json::Value = match serde_json::from_str(&event.data) {
         Ok(v) => v,
@@ -648,4 +649,282 @@ fn map_gemini_sse(state: &mut GeminiStreamState, event: &crate::sse::SseEvent) -
     }
 
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crew_core::{Message, MessageRole, ToolCall};
+
+    fn msg(role: MessageRole, content: &str) -> Message {
+        Message {
+            role,
+            content: content.to_string(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    // --- sanitize_schema_for_gemini tests ---
+
+    #[test]
+    fn test_sanitize_removes_additional_properties() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "additionalProperties": false
+        });
+        sanitize_schema_for_gemini(&mut schema);
+        assert!(schema.get("additionalProperties").is_none());
+    }
+
+    #[test]
+    fn test_sanitize_removes_dollar_fields() {
+        let mut schema = serde_json::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "$ref": "#/definitions/Foo",
+            "$id": "my-schema",
+            "type": "object"
+        });
+        sanitize_schema_for_gemini(&mut schema);
+        assert!(schema.get("$schema").is_none());
+        assert!(schema.get("$ref").is_none());
+        assert!(schema.get("$id").is_none());
+        assert_eq!(schema["type"], "object");
+    }
+
+    #[test]
+    fn test_sanitize_replaces_empty_items() {
+        let mut schema = serde_json::json!({
+            "type": "array",
+            "items": {}
+        });
+        sanitize_schema_for_gemini(&mut schema);
+        assert_eq!(schema["items"]["type"], "string");
+    }
+
+    #[test]
+    fn test_sanitize_preserves_non_empty_items() {
+        let mut schema = serde_json::json!({
+            "type": "array",
+            "items": {"type": "integer"}
+        });
+        sanitize_schema_for_gemini(&mut schema);
+        assert_eq!(schema["items"]["type"], "integer");
+    }
+
+    #[test]
+    fn test_sanitize_recursive() {
+        let mut schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "list": {
+                            "type": "array",
+                            "items": {}
+                        }
+                    }
+                }
+            }
+        });
+        sanitize_schema_for_gemini(&mut schema);
+        assert!(
+            schema["properties"]["nested"]
+                .get("additionalProperties")
+                .is_none()
+        );
+        assert_eq!(
+            schema["properties"]["nested"]["properties"]["list"]["items"]["type"],
+            "string"
+        );
+    }
+
+    // --- build_gemini_contents tests ---
+
+    #[test]
+    fn test_build_contents_system_extracted() {
+        let messages = vec![
+            msg(MessageRole::System, "You are helpful"),
+            msg(MessageRole::User, "Hi"),
+        ];
+        let (contents, system) = build_gemini_contents(&messages);
+        assert_eq!(system.as_deref(), Some("You are helpful"));
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].role, "user");
+    }
+
+    #[test]
+    fn test_build_contents_assistant_mapped_to_model() {
+        let messages = vec![
+            msg(MessageRole::User, "Hi"),
+            msg(MessageRole::Assistant, "Hello!"),
+        ];
+        let (contents, _) = build_gemini_contents(&messages);
+        assert_eq!(contents[1].role, "model");
+    }
+
+    #[test]
+    fn test_build_contents_tool_call_and_result() {
+        let messages = vec![
+            msg(MessageRole::User, "read file"),
+            Message {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                media: vec![],
+                tool_calls: Some(vec![ToolCall {
+                    id: "tc1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "foo.rs"}),
+                    metadata: None,
+                }]),
+                tool_call_id: None,
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+            Message {
+                role: MessageRole::Tool,
+                content: "file contents".into(),
+                media: vec![],
+                tool_calls: None,
+                tool_call_id: Some("tc1".into()),
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+        ];
+        let (contents, _) = build_gemini_contents(&messages);
+        // user, model (with functionCall), user (with functionResponse)
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[1].role, "model");
+        assert_eq!(contents[2].role, "user");
+    }
+
+    #[test]
+    fn test_build_contents_merges_consecutive_same_role() {
+        let messages = vec![
+            msg(MessageRole::User, "first"),
+            msg(MessageRole::User, "second"),
+        ];
+        let (contents, _) = build_gemini_contents(&messages);
+        // Should merge into 1 user turn
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0].parts.len(), 2);
+    }
+
+    #[test]
+    fn test_parts_compatible_blocks_mixed_types() {
+        let text = vec![GeminiPart::Text { text: "hi".into() }];
+        let func_resp = vec![GeminiPart::FunctionResponse {
+            function_response: GeminiFunctionResponse {
+                name: "test".into(),
+                response: serde_json::json!({"content": "ok"}),
+            },
+        }];
+        assert!(!parts_compatible(&text, &func_resp));
+        assert!(!parts_compatible(&func_resp, &text));
+        assert!(parts_compatible(&text, &text));
+        assert!(parts_compatible(&func_resp, &func_resp));
+    }
+
+    // --- SSE mapping tests ---
+
+    #[test]
+    fn test_gemini_sse_text_delta() {
+        let mut state = GeminiStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"candidates": [{"content": {"parts": [{"text": "Hello"}]}}]}"#.into(),
+        };
+        let events = map_gemini_sse(&mut state, &event);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::TextDelta(t) if t == "Hello"));
+    }
+
+    #[test]
+    fn test_gemini_sse_function_call() {
+        let mut state = GeminiStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"candidates": [{"content": {"parts": [{"functionCall": {"name": "shell", "args": {"command": "ls"}}}]}}]}"#.into(),
+        };
+        let events = map_gemini_sse(&mut state, &event);
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::ToolCallDelta { name, .. } if name.as_deref() == Some("shell"))));
+        assert!(state.has_tool_calls);
+    }
+
+    #[test]
+    fn test_gemini_sse_finish_reason() {
+        let mut state = GeminiStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"candidates": [{"content": {"parts": [{"text": "done"}]}, "finishReason": "STOP"}]}"#.into(),
+        };
+        let events = map_gemini_sse(&mut state, &event);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::Done(StopReason::EndTurn)))
+        );
+    }
+
+    #[test]
+    fn test_gemini_sse_finish_with_tools() {
+        let mut state = GeminiStreamState::default();
+        state.has_tool_calls = true;
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"candidates": [{"content": {"parts": []}, "finishReason": "STOP"}]}"#.into(),
+        };
+        let events = map_gemini_sse(&mut state, &event);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::Done(StopReason::ToolUse)))
+        );
+    }
+
+    #[test]
+    fn test_gemini_sse_usage() {
+        let mut state = GeminiStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"usageMetadata": {"promptTokenCount": 100, "candidatesTokenCount": 50}}"#
+                .into(),
+        };
+        let events = map_gemini_sse(&mut state, &event);
+        assert!(events.iter().any(
+            |e| matches!(e, StreamEvent::Usage(u) if u.input_tokens == 100 && u.output_tokens == 50)
+        ));
+    }
+
+    #[test]
+    fn test_gemini_sse_invalid_json() {
+        let mut state = GeminiStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: "not valid json".into(),
+        };
+        assert!(map_gemini_sse(&mut state, &event).is_empty());
+    }
+
+    // --- Provider metadata tests ---
+
+    #[test]
+    fn test_provider_name_and_model() {
+        let provider = GeminiProvider::new("test-key", "gemini-2.5-flash");
+        assert_eq!(provider.provider_name(), "gemini");
+        assert_eq!(provider.model_id(), "gemini-2.5-flash");
+    }
+
+    #[test]
+    fn test_with_base_url() {
+        let provider =
+            GeminiProvider::new("key", "model").with_base_url("https://custom.googleapis.com");
+        assert_eq!(provider.base_url, "https://custom.googleapis.com");
+    }
 }

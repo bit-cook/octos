@@ -193,3 +193,148 @@ impl Tool for PluginTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write as _;
+    use tempfile::NamedTempFile;
+
+    fn make_tool_def(name: &str, desc: &str) -> PluginToolDef {
+        PluginToolDef {
+            name: name.to_string(),
+            description: desc.to_string(),
+            input_schema: json!({"type": "object", "properties": {"msg": {"type": "string"}}}),
+        }
+    }
+
+    #[test]
+    fn new_sets_defaults() {
+        let def = make_tool_def("greet", "Say hello");
+        let tool = PluginTool::new("my-plugin".into(), def, PathBuf::from("/bin/echo"));
+
+        assert_eq!(tool.plugin_name, "my-plugin");
+        assert_eq!(tool.timeout, PluginTool::DEFAULT_TIMEOUT);
+        assert_eq!(tool.timeout, Duration::from_secs(30));
+        assert!(tool.blocked_env.is_empty());
+    }
+
+    #[test]
+    fn with_blocked_env_sets_list() {
+        let def = make_tool_def("t", "d");
+        let tool = PluginTool::new("p".into(), def, PathBuf::from("/bin/echo"))
+            .with_blocked_env(vec!["SECRET".into(), "TOKEN".into()]);
+
+        assert_eq!(tool.blocked_env, vec!["SECRET", "TOKEN"]);
+    }
+
+    #[test]
+    fn with_timeout_sets_custom() {
+        let def = make_tool_def("t", "d");
+        let tool = PluginTool::new("p".into(), def, PathBuf::from("/bin/echo"))
+            .with_timeout(Duration::from_secs(120));
+
+        assert_eq!(tool.timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn trait_methods_delegate_to_tool_def() {
+        let def = make_tool_def("my_tool", "A fine tool");
+        let tool = PluginTool::new("plug".into(), def, PathBuf::from("/bin/true"));
+
+        assert_eq!(tool.name(), "my_tool");
+        assert_eq!(tool.description(), "A fine tool");
+        let schema = tool.input_schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["msg"].is_object());
+    }
+
+    #[tokio::test]
+    async fn execute_spawns_subprocess_and_captures_output() {
+        // Create a temp script that reads stdin and writes structured JSON to stdout.
+        let mut script = NamedTempFile::new().expect("create temp file");
+        writeln!(
+            script,
+            r#"#!/bin/sh
+read INPUT
+echo '{{"output": "got: '"$INPUT"'", "success": true}}'
+"#
+        )
+        .unwrap();
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = script.as_file().metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            script.as_file().set_permissions(perms).unwrap();
+        }
+
+        let def = make_tool_def("echo_tool", "echoes input");
+        let tool = PluginTool::new("test-plugin".into(), def, script.path().to_path_buf())
+            .with_timeout(Duration::from_secs(5));
+
+        let args = json!({"msg": "hello"});
+        let result = tool.execute(&args).await.expect("execute should succeed");
+
+        assert!(result.success);
+        assert!(
+            result.output.contains("got:"),
+            "output should contain echoed input, got: {}",
+            result.output
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_fallback_on_non_json_stdout() {
+        // Script that outputs plain text (not JSON).
+        let mut script = NamedTempFile::new().expect("create temp file");
+        writeln!(script, "#!/bin/sh\necho 'plain text output'").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = script.as_file().metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            script.as_file().set_permissions(perms).unwrap();
+        }
+
+        let def = make_tool_def("plain_tool", "plain output");
+        let tool = PluginTool::new("p".into(), def, script.path().to_path_buf())
+            .with_timeout(Duration::from_secs(5));
+
+        let result = tool.execute(&json!({})).await.expect("should succeed");
+
+        assert!(result.success);
+        assert!(result.output.contains("plain text output"));
+    }
+
+    #[tokio::test]
+    async fn execute_timeout_returns_error() {
+        // Script that sleeps longer than the timeout.
+        let mut script = NamedTempFile::new().expect("create temp file");
+        writeln!(script, "#!/bin/sh\nsleep 60").unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = script.as_file().metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            script.as_file().set_permissions(perms).unwrap();
+        }
+
+        let def = make_tool_def("slow_tool", "too slow");
+        let tool = PluginTool::new("p".into(), def, script.path().to_path_buf())
+            .with_timeout(Duration::from_secs(1));
+
+        match tool.execute(&json!({})).await {
+            Err(e) => assert!(
+                e.to_string().contains("timed out"),
+                "expected timeout error, got: {e}"
+            ),
+            Ok(_) => panic!("expected timeout error, but execute succeeded"),
+        }
+    }
+}

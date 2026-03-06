@@ -206,4 +206,16 @@ mod tests {
         let ch = make_channel(vec!["12345"]);
         assert!(!ch.is_allowed("other"));
     }
+
+    #[test]
+    fn test_channel_name() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.name(), "discord");
+    }
+
+    #[test]
+    fn test_max_message_length() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.max_message_length(), 1900);
+    }
 }

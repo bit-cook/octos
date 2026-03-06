@@ -456,4 +456,53 @@ mod tests {
         assert_eq!(ext_from_mimetype("application/pdf"), ".pdf");
         assert_eq!(ext_from_mimetype("application/unknown"), "");
     }
+
+    #[test]
+    fn test_ext_from_mimetype_all_types() {
+        assert_eq!(ext_from_mimetype("image/gif"), ".gif");
+        assert_eq!(ext_from_mimetype("image/webp"), ".webp");
+        assert_eq!(ext_from_mimetype("audio/mpeg"), ".mp3");
+        assert_eq!(ext_from_mimetype("audio/mp4"), ".m4a");
+    }
+
+    #[test]
+    fn test_channel_name() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.name(), "whatsapp");
+    }
+
+    #[test]
+    fn test_default_bridge_url() {
+        let ch = WhatsAppChannel::new(
+            "",
+            vec![],
+            Arc::new(AtomicBool::new(false)),
+            PathBuf::from("/tmp"),
+        );
+        assert_eq!(ch.bridge_url, DEFAULT_BRIDGE_URL);
+    }
+
+    #[test]
+    fn test_custom_bridge_url() {
+        let ch = WhatsAppChannel::new(
+            "ws://custom:4000",
+            vec![],
+            Arc::new(AtomicBool::new(false)),
+            PathBuf::from("/tmp"),
+        );
+        assert_eq!(ch.bridge_url, "ws://custom:4000");
+    }
+
+    #[test]
+    fn test_clean_sender_with_lid() {
+        assert_eq!(
+            WhatsAppChannel::clean_sender("1234567890@lid"),
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn test_clean_sender_no_at() {
+        assert_eq!(WhatsAppChannel::clean_sender("noatsign"), "noatsign");
+    }
 }

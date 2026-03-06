@@ -578,3 +578,134 @@ fn extract_bearer_token(req: &axum::http::Request<axum::body::Body>) -> Option<S
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(String::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+
+    #[test]
+    fn send_code_request_deserialize() {
+        let json = r#"{"email": "test@example.com"}"#;
+        let req: SendCodeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.email, "test@example.com");
+    }
+
+    #[test]
+    fn send_code_response_serialize_with_message() {
+        let resp = SendCodeResponse {
+            ok: true,
+            message: Some("sent".into()),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["message"], "sent");
+    }
+
+    #[test]
+    fn send_code_response_skip_none_message() {
+        let resp = SendCodeResponse {
+            ok: true,
+            message: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json.get("message").is_none());
+    }
+
+    #[test]
+    fn verify_request_deserialize() {
+        let json = r#"{"email": "a@b.com", "code": "123456"}"#;
+        let req: VerifyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.email, "a@b.com");
+        assert_eq!(req.code, "123456");
+    }
+
+    #[test]
+    fn verify_response_serialize_success() {
+        let resp = VerifyResponse {
+            ok: true,
+            token: Some("tok123".into()),
+            user: None,
+            message: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["token"], "tok123");
+        // skip_serializing_if = None fields should be absent
+        assert!(json.get("user").is_none());
+        assert!(json.get("message").is_none());
+    }
+
+    #[test]
+    fn verify_response_serialize_failure() {
+        let resp = VerifyResponse {
+            ok: false,
+            token: None,
+            user: None,
+            message: Some("Invalid code".into()),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json.get("token").is_none());
+        assert_eq!(json["message"], "Invalid code");
+    }
+
+    #[test]
+    fn action_response_serialize() {
+        let resp = ActionResponse {
+            ok: true,
+            message: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], true);
+        assert!(json.get("message").is_none());
+    }
+
+    #[test]
+    fn action_response_with_message() {
+        let resp = ActionResponse {
+            ok: false,
+            message: Some("error occurred".into()),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["message"], "error occurred");
+    }
+
+    #[test]
+    fn extract_bearer_token_valid() {
+        let req = Request::builder()
+            .header("authorization", "Bearer my-secret-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(
+            extract_bearer_token(&req),
+            Some("my-secret-token".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_bearer_token_missing_header() {
+        let req = Request::builder().body(axum::body::Body::empty()).unwrap();
+        assert_eq!(extract_bearer_token(&req), None);
+    }
+
+    #[test]
+    fn extract_bearer_token_wrong_scheme() {
+        let req = Request::builder()
+            .header("authorization", "Basic abc123")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_bearer_token(&req), None);
+    }
+
+    #[test]
+    fn extract_bearer_token_empty_value() {
+        let req = Request::builder()
+            .header("authorization", "Bearer ")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_bearer_token(&req), Some(String::new()));
+    }
+}

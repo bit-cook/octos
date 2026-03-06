@@ -371,4 +371,20 @@ mod tests {
         let result = apply_hunks(content, &hunks).unwrap();
         assert_eq!(result, "A\nb\nc\nd\nE\nf\n");
     }
+
+    #[test]
+    fn test_overlapping_hunks_rejected() {
+        let content = "a\nb\nc\nd\ne\n";
+        // Two hunks that overlap: first covers lines 1-3, second starts at line 2
+        let diff = "@@ -1,3 +1,3 @@\n-a\n+A\n b\n c\n@@ -2,3 +2,3 @@\n-b\n+B\n c\n d\n";
+        let hunks = parse_unified_diff(diff).unwrap();
+        assert_eq!(hunks.len(), 2);
+        let result = apply_hunks(content, &hunks);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("overlapping hunks"),
+            "expected overlapping hunks error, got: {err_msg}"
+        );
+    }
 }

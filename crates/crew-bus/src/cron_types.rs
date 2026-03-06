@@ -89,10 +89,16 @@ impl CronJob {
                             schedule.upcoming(tz).next().map(|t| t.timestamp_millis())
                         } else {
                             // Invalid timezone, fall back to UTC
-                            schedule.upcoming(chrono::Utc).next().map(|t| t.timestamp_millis())
+                            schedule
+                                .upcoming(chrono::Utc)
+                                .next()
+                                .map(|t| t.timestamp_millis())
                         }
                     } else {
-                        schedule.upcoming(chrono::Utc).next().map(|t| t.timestamp_millis())
+                        schedule
+                            .upcoming(chrono::Utc)
+                            .next()
+                            .map(|t| t.timestamp_millis())
                     };
                     self.state.next_run_at_ms = next_ms;
                 } else {

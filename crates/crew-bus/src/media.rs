@@ -65,3 +65,71 @@ pub fn is_image(path: &str) -> bool {
         || lower.ends_with(".gif")
         || lower.ends_with(".webp")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_audio_supported_extensions() {
+        assert!(is_audio("voice.ogg"));
+        assert!(is_audio("song.mp3"));
+        assert!(is_audio("memo.m4a"));
+        assert!(is_audio("sound.wav"));
+        assert!(is_audio("clip.oga"));
+        assert!(is_audio("voice.opus"));
+    }
+
+    #[test]
+    fn test_is_audio_case_insensitive() {
+        assert!(is_audio("file.MP3"));
+        assert!(is_audio("file.Wav"));
+        assert!(is_audio("file.OGG"));
+    }
+
+    #[test]
+    fn test_is_audio_rejects_non_audio() {
+        assert!(!is_audio("photo.jpg"));
+        assert!(!is_audio("doc.pdf"));
+        assert!(!is_audio("code.rs"));
+        assert!(!is_audio("noext"));
+        assert!(!is_audio(""));
+    }
+
+    #[test]
+    fn test_is_audio_with_path() {
+        assert!(is_audio("/tmp/media/voice.ogg"));
+        assert!(is_audio("relative/path/song.mp3"));
+    }
+
+    #[test]
+    fn test_is_image_supported_extensions() {
+        assert!(is_image("photo.jpg"));
+        assert!(is_image("photo.jpeg"));
+        assert!(is_image("icon.png"));
+        assert!(is_image("anim.gif"));
+        assert!(is_image("modern.webp"));
+    }
+
+    #[test]
+    fn test_is_image_case_insensitive() {
+        assert!(is_image("file.JPG"));
+        assert!(is_image("file.Png"));
+        assert!(is_image("file.WEBP"));
+    }
+
+    #[test]
+    fn test_is_image_rejects_non_image() {
+        assert!(!is_image("voice.ogg"));
+        assert!(!is_image("doc.pdf"));
+        assert!(!is_image("code.rs"));
+        assert!(!is_image("noext"));
+        assert!(!is_image(""));
+    }
+
+    #[test]
+    fn test_is_image_with_path() {
+        assert!(is_image("/tmp/photos/shot.png"));
+        assert!(is_image("uploads/avatar.jpg"));
+    }
+}

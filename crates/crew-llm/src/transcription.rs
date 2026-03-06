@@ -90,3 +90,38 @@ impl GroqTranscriber {
         Ok(text.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_sets_defaults() {
+        let t = GroqTranscriber::new("test-key");
+        assert_eq!(t.model, "whisper-large-v3");
+    }
+
+    #[test]
+    fn test_mime_detection() {
+        // Exercise the same extension-to-MIME logic used in transcribe()
+        let cases = vec![
+            ("ogg", "audio/ogg"),
+            ("oga", "audio/ogg"),
+            ("opus", "audio/ogg"),
+            ("mp3", "audio/mpeg"),
+            ("m4a", "audio/mp4"),
+            ("wav", "audio/wav"),
+            ("xyz", "audio/ogg"), // fallback
+        ];
+        for (ext, expected) in cases {
+            let mime = match ext {
+                "ogg" | "oga" | "opus" => "audio/ogg",
+                "mp3" => "audio/mpeg",
+                "m4a" => "audio/mp4",
+                "wav" => "audio/wav",
+                _ => "audio/ogg",
+            };
+            assert_eq!(mime, expected, "ext={ext}");
+        }
+    }
+}

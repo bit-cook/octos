@@ -403,4 +403,87 @@ mod tests {
             "mock"
         }
     }
+
+    /// Provider that fails N times with a retryable error, then succeeds.
+    struct FailingStreamProvider {
+        remaining_failures: std::sync::atomic::AtomicU32,
+    }
+
+    #[async_trait]
+    impl LlmProvider for FailingStreamProvider {
+        async fn chat(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSpec],
+            _config: &ChatConfig,
+        ) -> Result<ChatResponse> {
+            unimplemented!()
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSpec],
+            _config: &ChatConfig,
+        ) -> Result<ChatStream> {
+            let remaining = self
+                .remaining_failures
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            if remaining > 0 {
+                eyre::bail!("API error: 503 - service unavailable");
+            }
+            // Return an empty stream on success
+            let stream = futures::stream::empty();
+            Ok(Box::pin(stream))
+        }
+
+        fn model_id(&self) -> &str {
+            "failing-stream"
+        }
+
+        fn provider_name(&self) -> &str {
+            "test"
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_retries_on_503() {
+        let provider = RetryProvider {
+            inner: Arc::new(FailingStreamProvider {
+                remaining_failures: std::sync::atomic::AtomicU32::new(2), // fail twice, then succeed
+            }),
+            config: RetryConfig {
+                max_retries: 3,
+                initial_delay: Duration::from_millis(1), // fast for tests
+                max_delay: Duration::from_millis(10),
+                backoff_multiplier: 1.0,
+                ..Default::default()
+            },
+        };
+
+        let result = provider.chat_stream(&[], &[], &ChatConfig::default()).await;
+        assert!(result.is_ok(), "should succeed after retries");
+    }
+
+    #[tokio::test]
+    async fn test_chat_stream_exhausts_retries() {
+        let provider = RetryProvider {
+            inner: Arc::new(FailingStreamProvider {
+                remaining_failures: std::sync::atomic::AtomicU32::new(10), // always fail
+            }),
+            config: RetryConfig {
+                max_retries: 2,
+                initial_delay: Duration::from_millis(1),
+                max_delay: Duration::from_millis(10),
+                backoff_multiplier: 1.0,
+                ..Default::default()
+            },
+        };
+
+        let result = provider.chat_stream(&[], &[], &ChatConfig::default()).await;
+        match result {
+            Err(e) => assert!(e.to_string().contains("503"), "unexpected error: {e}"),
+            Ok(_) => panic!("should fail after exhausting retries"),
+        }
+    }
 }

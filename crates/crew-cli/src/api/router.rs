@@ -376,6 +376,7 @@ async fn admin_auth_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Request;
 
     #[test]
     fn test_constant_time_eq_equal() {
@@ -400,5 +401,69 @@ mod tests {
     #[test]
     fn test_constant_time_eq_single_bit_diff() {
         assert!(!constant_time_eq(b"\x00", b"\x01"));
+    }
+
+    #[test]
+    fn extract_token_from_bearer_header() {
+        let req = Request::builder()
+            .header("authorization", "Bearer my-token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "my-token");
+    }
+
+    #[test]
+    fn extract_token_from_query_param() {
+        let req = Request::builder()
+            .uri("/api/chat/stream?token=query-tok")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "query-tok");
+    }
+
+    #[test]
+    fn extract_token_header_takes_precedence() {
+        let req = Request::builder()
+            .uri("/api/chat/stream?token=query-tok")
+            .header("authorization", "Bearer header-tok")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "header-tok");
+    }
+
+    #[test]
+    fn extract_token_no_auth_returns_empty() {
+        let req = Request::builder()
+            .uri("/api/status")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "");
+    }
+
+    #[test]
+    fn extract_token_wrong_scheme_returns_empty() {
+        let req = Request::builder()
+            .header("authorization", "Basic abc123")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "");
+    }
+
+    #[test]
+    fn extract_token_query_with_other_params() {
+        let req = Request::builder()
+            .uri("/api/stream?foo=bar&token=tok123&baz=1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "tok123");
+    }
+
+    #[test]
+    fn extract_token_query_no_token_param() {
+        let req = Request::builder()
+            .uri("/api/stream?foo=bar&baz=1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert_eq!(extract_token(&req), "");
     }
 }

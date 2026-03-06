@@ -232,7 +232,7 @@ impl GatewayCommand {
                 let adaptive_config = config
                     .adaptive_routing
                     .as_ref()
-                    .map(|ar| AdaptiveConfig::from(ar))
+                    .map(AdaptiveConfig::from)
                     .unwrap_or_default();
                 info!("adaptive routing enabled ({} providers)", providers.len());
                 Arc::new(AdaptiveRouter::new(providers, adaptive_config))
@@ -430,7 +430,7 @@ impl GatewayCommand {
 
         // Optional tools (only exist in normal mode)
         let mut spawn_tool: Option<Arc<SpawnTool>> = None;
-        let mut cron_tool_arc: Option<Arc<CronTool>> = None;
+        let cron_tool_arc: Option<Arc<CronTool>>;
         let mut pipeline_tool: Option<Arc<crew_pipeline::RunPipelineTool>> = None;
 
         let mut tools;
@@ -2118,7 +2118,7 @@ async fn handle_account_command(
     match parts.first().copied().unwrap_or("list") {
         "" | "list" => match store.list_sub_accounts(parent_id) {
             Ok(subs) if subs.is_empty() => {
-                format!("No sub-accounts.\nCreate one with: /account create <name>")
+                "No sub-accounts.\nCreate one with: /account create <name>".to_string()
             }
             Ok(subs) => {
                 let mut lines = vec!["Sub-accounts:".to_string()];
@@ -2224,11 +2224,7 @@ async fn handle_account_command(
                     "telegram-token" => {
                         let env_name = format!(
                             "TELEGRAM_BOT_TOKEN_{}",
-                            profile
-                                .name
-                                .to_uppercase()
-                                .replace(' ', "_")
-                                .replace('-', "_")
+                            profile.name.to_uppercase().replace([' ', '-'], "_")
                         );
                         profile.config.channels.retain(|ch| {
                             !matches!(ch, crate::profiles::ChannelCredentials::Telegram { .. })
@@ -2279,19 +2275,11 @@ async fn handle_account_command(
                         // Collect both if provided; create/replace Feishu channel
                         let id_env = format!(
                             "LARK_APP_ID_{}",
-                            profile
-                                .name
-                                .to_uppercase()
-                                .replace(' ', "_")
-                                .replace('-', "_")
+                            profile.name.to_uppercase().replace([' ', '-'], "_")
                         );
                         let secret_env = format!(
                             "LARK_APP_SECRET_{}",
-                            profile
-                                .name
-                                .to_uppercase()
-                                .replace(' ', "_")
-                                .replace('-', "_")
+                            profile.name.to_uppercase().replace([' ', '-'], "_")
                         );
                         if key == "feishu-app-id" {
                             profile

@@ -353,3 +353,123 @@ impl Updater {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn valid_release_json() -> serde_json::Value {
+        json!({
+            "tag_name": "v0.3.1",
+            "published_at": "2026-03-01T12:00:00Z",
+            "assets": [
+                {
+                    "name": ASSET_NAME,
+                    "browser_download_url": "https://github.com/hagency-org/crew-rs/releases/download/v0.3.1/crew-bundle-aarch64-apple-darwin.tar.gz",
+                    "size": 12345678
+                }
+            ]
+        })
+    }
+
+    #[test]
+    fn parse_release_valid() {
+        let resp = valid_release_json();
+        let info = Updater::parse_release(&resp).expect("should parse valid release");
+        assert_eq!(info.tag, "v0.3.1");
+        assert_eq!(info.version, "0.3.1");
+        assert_eq!(info.published_at, "2026-03-01T12:00:00Z");
+        assert!(info.asset_url.contains("crew-bundle-aarch64-apple-darwin"));
+        assert_eq!(info.asset_size, 12345678);
+    }
+
+    #[test]
+    fn parse_release_missing_tag_name() {
+        let resp = json!({
+            "published_at": "2026-03-01T12:00:00Z",
+            "assets": []
+        });
+        let err = Updater::parse_release(&resp).unwrap_err();
+        assert!(err.to_string().contains("missing tag_name"));
+    }
+
+    #[test]
+    fn parse_release_missing_assets() {
+        let resp = json!({
+            "tag_name": "v0.3.1",
+            "published_at": "2026-03-01T12:00:00Z"
+        });
+        let err = Updater::parse_release(&resp).unwrap_err();
+        assert!(err.to_string().contains("missing assets array"));
+    }
+
+    #[test]
+    fn parse_release_no_matching_asset() {
+        let resp = json!({
+            "tag_name": "v0.3.1",
+            "published_at": "2026-03-01T12:00:00Z",
+            "assets": [
+                {
+                    "name": "some-other-asset.tar.gz",
+                    "browser_download_url": "https://example.com/other.tar.gz",
+                    "size": 100
+                }
+            ]
+        });
+        let err = Updater::parse_release(&resp).unwrap_err();
+        assert!(err.to_string().contains("no asset named"));
+    }
+
+    #[test]
+    fn parse_release_strips_v_prefix() {
+        let resp = valid_release_json();
+        let info = Updater::parse_release(&resp).unwrap();
+        assert_eq!(info.version, "0.3.1");
+
+        // Without v prefix
+        let mut resp_no_v = valid_release_json();
+        resp_no_v["tag_name"] = json!("0.4.0");
+        let info = Updater::parse_release(&resp_no_v).unwrap();
+        assert_eq!(info.tag, "0.4.0");
+        assert_eq!(info.version, "0.4.0");
+    }
+
+    #[test]
+    fn release_info_serde_roundtrip() {
+        let info = ReleaseInfo {
+            tag: "v1.0.0".into(),
+            version: "1.0.0".into(),
+            published_at: "2026-01-01T00:00:00Z".into(),
+            asset_url: "https://example.com/asset.tar.gz".into(),
+            asset_size: 999,
+        };
+        let serialized = serde_json::to_string(&info).unwrap();
+        let deserialized: ReleaseInfo = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.tag, info.tag);
+        assert_eq!(deserialized.version, info.version);
+        assert_eq!(deserialized.published_at, info.published_at);
+        assert_eq!(deserialized.asset_url, info.asset_url);
+        assert_eq!(deserialized.asset_size, info.asset_size);
+    }
+
+    #[test]
+    fn update_result_serde_roundtrip() {
+        let result = UpdateResult {
+            old_version: "0.2.0".into(),
+            new_version: "0.3.0".into(),
+            binaries_updated: vec!["crew".into(), "crew-gateway".into()],
+        };
+        let serialized = serde_json::to_string(&result).unwrap();
+        let deserialized: UpdateResult = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.old_version, result.old_version);
+        assert_eq!(deserialized.new_version, result.new_version);
+        assert_eq!(deserialized.binaries_updated, result.binaries_updated);
+    }
+
+    #[test]
+    fn current_version_non_empty() {
+        let version = Updater::current_version();
+        assert!(!version.is_empty());
+    }
+}

@@ -308,3 +308,171 @@ impl EpisodeStore {
         .await?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::episode::{Episode, EpisodeOutcome};
+    use crew_core::{AgentId, TaskId};
+    use std::path::PathBuf;
+
+    fn make_episode(summary: &str, cwd: &str) -> Episode {
+        Episode::new(
+            TaskId::new(),
+            AgentId::new("test-agent"),
+            PathBuf::from(cwd),
+            summary.into(),
+            EpisodeOutcome::Success,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_open_creates_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+        // Verify we can get a nonexistent episode
+        let result = store.get("nonexistent").await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_store_and_get() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        let ep = make_episode("Fixed parser bug", "/tmp/project");
+        let ep_id = ep.id.clone();
+
+        store.store(ep).await.unwrap();
+
+        let retrieved = store.get(&ep_id).await.unwrap();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert_eq!(retrieved.id, ep_id);
+        assert_eq!(retrieved.summary, "Fixed parser bug");
+    }
+
+    #[tokio::test]
+    async fn test_recent_for_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        let ep1 = make_episode("first task", "/project");
+        let ep2 = make_episode("second task", "/project");
+        let ep3 = make_episode("other dir task", "/other");
+
+        store.store(ep1).await.unwrap();
+        store.store(ep2).await.unwrap();
+        store.store(ep3).await.unwrap();
+
+        let recent = store
+            .recent_for_cwd(Path::new("/project"), 10)
+            .await
+            .unwrap();
+        assert_eq!(recent.len(), 2);
+
+        let other = store.recent_for_cwd(Path::new("/other"), 10).await.unwrap();
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].summary, "other dir task");
+    }
+
+    #[tokio::test]
+    async fn test_recent_for_cwd_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        for i in 0..5 {
+            store
+                .store(make_episode(&format!("task {i}"), "/proj"))
+                .await
+                .unwrap();
+        }
+
+        let recent = store.recent_for_cwd(Path::new("/proj"), 3).await.unwrap();
+        assert_eq!(recent.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_find_relevant() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        store
+            .store(make_episode("Fixed parser bug in tokenizer", "/proj"))
+            .await
+            .unwrap();
+        store
+            .store(make_episode("Added new API endpoint", "/proj"))
+            .await
+            .unwrap();
+        store
+            .store(make_episode("Refactored parser module", "/proj"))
+            .await
+            .unwrap();
+
+        let results = store
+            .find_relevant(Path::new("/proj"), "parser", 10)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_find_relevant_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        store
+            .store(make_episode("Fixed UI layout", "/proj"))
+            .await
+            .unwrap();
+
+        let results = store
+            .find_relevant(Path::new("/proj"), "database", 10)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_store_embedding_and_hybrid_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+
+        let ep = make_episode("Implemented vector search", "/proj");
+        let ep_id = ep.id.clone();
+        store.store(ep).await.unwrap();
+
+        // Store a dummy embedding
+        let embedding = vec![0.1f32; 1536];
+        store
+            .store_embedding(&ep_id, embedding.clone())
+            .await
+            .unwrap();
+
+        // Hybrid search (text only, no query embedding)
+        let results = store
+            .find_relevant_hybrid("vector search", None, 10)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].id, ep_id);
+    }
+
+    #[tokio::test]
+    async fn test_reopen_persists_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let ep_id;
+        {
+            let store = EpisodeStore::open(dir.path()).await.unwrap();
+            let ep = make_episode("persistent data", "/proj");
+            ep_id = ep.id.clone();
+            store.store(ep).await.unwrap();
+        }
+        // Reopen
+        let store = EpisodeStore::open(dir.path()).await.unwrap();
+        let retrieved = store.get(&ep_id).await.unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().summary, "persistent data");
+    }
+}

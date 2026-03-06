@@ -37,14 +37,14 @@ pub use config::{ChatConfig, ToolChoice};
 pub use context_override::ContextWindowOverride;
 pub use embedding::{EmbeddingProvider, OpenAIEmbedder};
 pub use failover::ProviderChain;
+pub use ominix::OminixClient;
 pub use provider::{
-    LlmProvider, build_http_client, DEFAULT_EMBEDDING_CONNECT_TIMEOUT_SECS,
-    DEFAULT_EMBEDDING_TIMEOUT_SECS, DEFAULT_LLM_CONNECT_TIMEOUT_SECS, DEFAULT_LLM_TIMEOUT_SECS,
+    DEFAULT_EMBEDDING_CONNECT_TIMEOUT_SECS, DEFAULT_EMBEDDING_TIMEOUT_SECS,
+    DEFAULT_LLM_CONNECT_TIMEOUT_SECS, DEFAULT_LLM_TIMEOUT_SECS, LlmProvider, build_http_client,
 };
 pub use retry::{RetryConfig, RetryProvider};
-pub use swappable::SwappableProvider;
 pub use router::{ProviderRouter, SubProviderMeta};
-pub use ominix::OminixClient;
+pub use swappable::SwappableProvider;
 pub use transcription::GroqTranscriber;
 pub use types::{
     ChatResponse, ChatStream, StopReason, StreamEvent, TokenUsage, ToolSpec, strip_think_tags,

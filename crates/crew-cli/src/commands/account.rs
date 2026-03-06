@@ -220,11 +220,7 @@ impl Executable for AccountCommand {
                 if let Some(ref token) = telegram_token {
                     let env_name = format!(
                         "TELEGRAM_BOT_TOKEN_{}",
-                        profile
-                            .name
-                            .to_uppercase()
-                            .replace(' ', "_")
-                            .replace('-', "_")
+                        profile.name.to_uppercase().replace([' ', '-'], "_")
                     );
                     // Remove existing Telegram channel if any
                     profile
@@ -282,19 +278,11 @@ impl Executable for AccountCommand {
 
                     let id_env = format!(
                         "LARK_APP_ID_{}",
-                        profile
-                            .name
-                            .to_uppercase()
-                            .replace(' ', "_")
-                            .replace('-', "_")
+                        profile.name.to_uppercase().replace([' ', '-'], "_")
                     );
                     let secret_env = format!(
                         "LARK_APP_SECRET_{}",
-                        profile
-                            .name
-                            .to_uppercase()
-                            .replace(' ', "_")
-                            .replace('-', "_")
+                        profile.name.to_uppercase().replace([' ', '-'], "_")
                     );
 
                     // Remove existing Feishu channel if any

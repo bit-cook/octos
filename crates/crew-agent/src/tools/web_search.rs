@@ -539,8 +539,6 @@ fn decode_ddg_url(raw: &str) -> String {
         let encoded = &raw[start + 5..];
         let end = encoded.find('&').unwrap_or(encoded.len());
         urldecoded(&encoded[..end])
-    } else if raw.starts_with("http") {
-        raw.to_string()
     } else {
         raw.to_string()
     }

@@ -152,6 +152,7 @@ impl StatusHandle {
 }
 
 /// Background loop that sends typing indicators and updates the status message.
+#[allow(clippy::too_many_arguments)]
 async fn run_status_loop(
     channel: Arc<dyn Channel>,
     chat_id: String,

@@ -528,6 +528,74 @@ impl ToolRegistry {
 }
 
 #[cfg(test)]
+mod estimate_tests {
+    use super::*;
+
+    #[test]
+    fn test_null() {
+        assert_eq!(estimate_json_size(&serde_json::Value::Null), 4);
+    }
+
+    #[test]
+    fn test_bool() {
+        assert_eq!(estimate_json_size(&serde_json::json!(true)), 4);
+        assert_eq!(estimate_json_size(&serde_json::json!(false)), 5);
+    }
+
+    #[test]
+    fn test_number() {
+        assert_eq!(estimate_json_size(&serde_json::json!(42)), 2);
+        assert_eq!(estimate_json_size(&serde_json::json!(2.72)), 4);
+    }
+
+    #[test]
+    fn test_string_simple() {
+        // "hello" -> 5 chars + 2 quotes = 7
+        assert_eq!(estimate_json_size(&serde_json::json!("hello")), 7);
+    }
+
+    #[test]
+    fn test_string_with_escapes() {
+        // "a\"b" has 3 chars + 1 escape overhead + 2 quotes = 6
+        assert_eq!(estimate_json_size(&serde_json::json!("a\"b")), 6);
+        // "a\nb" has 3 chars + 1 escape + 2 quotes = 6
+        assert_eq!(estimate_json_size(&serde_json::json!("a\nb")), 6);
+    }
+
+    #[test]
+    fn test_empty_array() {
+        assert_eq!(estimate_json_size(&serde_json::json!([])), 2);
+    }
+
+    #[test]
+    fn test_array_with_elements() {
+        // [1,2,3] = 2 brackets + 3 numbers (1+1+1) + 2 commas = 7
+        assert_eq!(estimate_json_size(&serde_json::json!([1, 2, 3])), 7);
+    }
+
+    #[test]
+    fn test_empty_object() {
+        assert_eq!(estimate_json_size(&serde_json::json!({})), 2);
+    }
+
+    #[test]
+    fn test_object_with_fields() {
+        // {"a":1} = 2 braces + key(1) + 3 (quotes+colon) + value(1) = 7
+        let v = serde_json::json!({"a": 1});
+        assert_eq!(estimate_json_size(&v), 7);
+    }
+
+    #[test]
+    fn test_nested_structure() {
+        let v = serde_json::json!({"x": [1, 2]});
+        // Outer: 2 + key(1+3) + inner array
+        // Inner array: 2 + 1 + 1 + 1 comma = 5
+        // Total: 2 + 4 + 5 = 11
+        assert_eq!(estimate_json_size(&v), 11);
+    }
+}
+
+#[cfg(test)]
 mod nofollow_tests {
     use super::*;
 
@@ -643,6 +711,13 @@ mod path_tests {
         let base = Path::new("/home/user/project");
         let p = resolve_path(base, "./README.md").unwrap();
         assert_eq!(p, PathBuf::from("/home/user/project/README.md"));
+    }
+
+    #[test]
+    fn test_resolve_allows_deeply_nested() {
+        let base = Path::new("/home/user/project");
+        let p = resolve_path(base, "a/b/c/d/e/f.rs").unwrap();
+        assert_eq!(p, PathBuf::from("/home/user/project/a/b/c/d/e/f.rs"));
     }
 
     #[test]

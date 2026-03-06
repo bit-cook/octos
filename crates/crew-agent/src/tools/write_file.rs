@@ -97,3 +97,89 @@ impl Tool for WriteFileTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_write_file_creates_new() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WriteFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({"path": "new.txt", "content": "hello world\n"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("Successfully wrote"));
+        let content = std::fs::read_to_string(dir.path().join("new.txt")).unwrap();
+        assert_eq!(content, "hello world\n");
+    }
+
+    #[tokio::test]
+    async fn test_write_file_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WriteFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({"path": "a/b/c/deep.txt", "content": "nested\n"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(dir.path().join("a/b/c/deep.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_file_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("exist.txt"), "old content").unwrap();
+
+        let tool = WriteFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "exist.txt", "content": "new content"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        let content = std::fs::read_to_string(dir.path().join("exist.txt")).unwrap();
+        assert_eq!(content, "new content");
+    }
+
+    #[tokio::test]
+    async fn test_write_file_traversal_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WriteFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({"path": "../escape.txt", "content": "bad"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("outside working directory"));
+    }
+
+    #[tokio::test]
+    async fn test_write_file_reports_line_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = WriteFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({"path": "multi.txt", "content": "a\nb\nc\n"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("3 lines"));
+    }
+
+    #[test]
+    fn test_tool_metadata() {
+        let tool = WriteFileTool::new("/tmp");
+        assert_eq!(tool.name(), "write_file");
+        assert!(tool.tags().contains(&"fs"));
+    }
+}

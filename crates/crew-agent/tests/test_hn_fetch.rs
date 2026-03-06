@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 #[tokio::test]
+#[ignore] // Network-dependent: fetches live RSS/API data from external services
 async fn test_new_sources() {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))

@@ -124,9 +124,7 @@ impl SwitchModelTool {
         let (current_provider, current_model) = self.swappable.provider_info();
 
         let mut lines = Vec::new();
-        lines.push(format!(
-            "Current model: {current_provider}/{current_model}"
-        ));
+        lines.push(format!("Current model: {current_provider}/{current_model}"));
         lines.push(String::new());
         lines.push("Available providers:".to_string());
 
@@ -183,7 +181,7 @@ impl SwitchModelTool {
                     output: "Error: 'model' is required for switch action.".to_string(),
                     success: false,
                     ..Default::default()
-                }
+                };
             }
         };
 
@@ -201,7 +199,7 @@ impl SwitchModelTool {
                     ),
                     success: false,
                     ..Default::default()
-                }
+                };
             }
         };
 
@@ -216,7 +214,7 @@ impl SwitchModelTool {
                     ),
                     success: false,
                     ..Default::default()
-                }
+                };
             }
         };
 

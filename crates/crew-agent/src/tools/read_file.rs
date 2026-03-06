@@ -143,3 +143,95 @@ impl Tool for ReadFileTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_read_file_basic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("hello.txt"), "line1\nline2\nline3\n").unwrap();
+
+        let tool = ReadFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "hello.txt"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("line1"));
+        assert!(result.output.contains("line2"));
+        assert!(result.output.contains("line3"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_with_line_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(dir.path().join("lines.txt"), &content).unwrap();
+
+        let tool = ReadFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "lines.txt", "start_line": 3, "end_line": 5}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("line 3"));
+        assert!(result.output.contains("line 5"));
+        assert!(!result.output.contains("line 1"));
+        assert!(!result.output.contains("line 6"));
+        assert!(result.output.contains("showing lines 3-5 of 10"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = ReadFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "nope.txt"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_traversal_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = ReadFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "../../etc/passwd"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("outside working directory"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_start_beyond_end() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("short.txt"), "one\ntwo\n").unwrap();
+
+        let tool = ReadFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"path": "short.txt", "start_line": 100}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("beyond file length"));
+    }
+
+    #[test]
+    fn test_tool_metadata() {
+        let tool = ReadFileTool::new("/tmp");
+        assert_eq!(tool.name(), "read_file");
+        assert!(tool.tags().contains(&"fs"));
+    }
+}

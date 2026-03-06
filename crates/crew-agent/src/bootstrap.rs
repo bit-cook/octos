@@ -129,3 +129,34 @@ pub fn bootstrap_single_skill(skills_dir: &Path, name: &str) -> bool {
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bootstrap_bundled_skills_with_empty_dir_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        // No sibling binaries exist next to the test runner, so nothing gets bootstrapped.
+        let count = bootstrap_bundled_skills(&skills_dir);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn bootstrap_single_skill_nonexistent_name_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        assert!(!bootstrap_single_skill(&skills_dir, "no-such-skill-xyz"));
+    }
+
+    #[test]
+    fn bootstrap_single_skill_valid_name_no_binary_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        // "news" is a real bundled skill name, but the binary won't exist next to the test runner.
+        assert!(!bootstrap_single_skill(&skills_dir, "news"));
+    }
+}

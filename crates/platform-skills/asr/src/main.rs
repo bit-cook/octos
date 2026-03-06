@@ -273,7 +273,14 @@ fn handle_synthesize(input_json: &str) {
     let language = input.language.unwrap_or_else(|| "chinese".to_string());
     let speaker = input.speaker.unwrap_or_else(|| "vivian".to_string());
 
-    match synthesize_segment(&client, &base_url, &input.text, &speaker, &language, Path::new(&output_path)) {
+    match synthesize_segment(
+        &client,
+        &base_url,
+        &input.text,
+        &speaker,
+        &language,
+        Path::new(&output_path),
+    ) {
         Ok((size, duration_secs)) => {
             succeed(&format!(
                 "Generated audio: {output_path} ({duration_secs:.1}s, {size} bytes). Use send_file to deliver it to the user."
@@ -361,8 +368,14 @@ fn handle_podcast(input_json: &str) {
 
         let seg_path = PathBuf::from(format!("/tmp/crew_podcast_seg_{}_{}.wav", timestamp(), i));
 
-        match synthesize_segment(&client, &base_url, &line.text, &line.voice, &language, &seg_path)
-        {
+        match synthesize_segment(
+            &client,
+            &base_url,
+            &line.text,
+            &line.voice,
+            &language,
+            &seg_path,
+        ) {
             Ok((_size, duration)) => {
                 total_duration += duration;
                 segments.push(seg_path);
@@ -445,7 +458,10 @@ fn handle_voice_clone(input_json: &str) {
 
     let ref_path = Path::new(&input.reference_audio);
     if !ref_path.exists() {
-        fail(&format!("Reference audio not found: {}", input.reference_audio));
+        fail(&format!(
+            "Reference audio not found: {}",
+            input.reference_audio
+        ));
     }
     if !ref_path.is_file() {
         fail(&format!("Not a file: {}", input.reference_audio));

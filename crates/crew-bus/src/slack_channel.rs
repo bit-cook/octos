@@ -436,4 +436,32 @@ mod tests {
         assert_eq!(env.r#type, "events_api");
         assert!(env.payload.is_some());
     }
+
+    #[test]
+    fn test_envelope_missing_optional_fields() {
+        let json = r#"{"type": "hello"}"#;
+        let env: SlackEnvelope = serde_json::from_str(json).unwrap();
+        assert!(env.envelope_id.is_none());
+        assert_eq!(env.r#type, "hello");
+        assert!(env.payload.is_none());
+    }
+
+    #[test]
+    fn test_envelope_default_type() {
+        let json = r#"{}"#;
+        let env: SlackEnvelope = serde_json::from_str(json).unwrap();
+        assert_eq!(env.r#type, "");
+    }
+
+    #[test]
+    fn test_channel_name() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.name(), "slack");
+    }
+
+    #[test]
+    fn test_max_message_length() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.max_message_length(), 3900);
+    }
 }

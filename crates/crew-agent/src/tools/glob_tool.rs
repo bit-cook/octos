@@ -134,3 +134,107 @@ impl Tool for GlobTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_glob_finds_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "").unwrap();
+        std::fs::write(dir.path().join("c.txt"), "").unwrap();
+
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "*.rs"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("2 file(s)"));
+        assert!(result.output.contains("a.rs"));
+        assert!(result.output.contains("b.rs"));
+        assert!(!result.output.contains("c.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_recursive() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), "").unwrap();
+        std::fs::write(dir.path().join("src/nested/mod.rs"), "").unwrap();
+
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "**/*.rs"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("2 file(s)"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "*.xyz"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("No files found"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_rejects_absolute_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "/etc/*.conf"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_glob_rejects_parent_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "../../*.rs"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_glob_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..10 {
+            std::fs::write(dir.path().join(format!("file{i}.txt")), "").unwrap();
+        }
+
+        let tool = GlobTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "*.txt", "limit": 3}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("3 file(s)"));
+    }
+
+    #[test]
+    fn test_tool_metadata() {
+        let tool = GlobTool::new("/tmp");
+        assert_eq!(tool.name(), "glob");
+        assert!(tool.tags().contains(&"search"));
+    }
+}

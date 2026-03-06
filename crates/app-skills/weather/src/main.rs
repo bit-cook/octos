@@ -37,7 +37,9 @@ struct GetForecastInput {
     days: u8,
 }
 
-fn default_days() -> u8 { 7 }
+fn default_days() -> u8 {
+    7
+}
 
 #[derive(Deserialize)]
 struct WeatherResponse {
@@ -81,7 +83,9 @@ fn main() {
     match tool_name {
         "get_weather" => handle_get_weather(&buf),
         "get_forecast" => handle_get_forecast(&buf),
-        _ => fail(&format!("Unknown tool '{tool_name}'. Expected: get_weather, get_forecast")),
+        _ => fail(&format!(
+            "Unknown tool '{tool_name}'. Expected: get_weather, get_forecast"
+        )),
     }
 }
 
@@ -124,7 +128,9 @@ fn geocode(client: &reqwest::blocking::Client, city: &str) -> GeoLocation {
                 if let Some(mut results) = geo.results {
                     if !results.is_empty() {
                         // Pick the most populated result (avoids returning tiny hamlets)
-                        results.sort_by(|a, b| b.population.unwrap_or(0).cmp(&a.population.unwrap_or(0)));
+                        results.sort_by(|a, b| {
+                            b.population.unwrap_or(0).cmp(&a.population.unwrap_or(0))
+                        });
                         return results.into_iter().next().unwrap();
                     }
                 }
@@ -216,18 +222,41 @@ fn handle_get_weather(input_json: &str) {
     let city_display = format!(
         "{}{}{}",
         location.name,
-        location.admin1.as_ref().map(|a| format!(", {a}")).unwrap_or_default(),
-        location.country.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
+        location
+            .admin1
+            .as_ref()
+            .map(|a| format!(", {a}"))
+            .unwrap_or_default(),
+        location
+            .country
+            .as_ref()
+            .map(|c| format!(", {c}"))
+            .unwrap_or_default(),
     );
 
-    let temp = current.temperature_2m.map(|t| format!("{t:.1}°C")).unwrap_or_default();
-    let feels = current.apparent_temperature.map(|t| format!("{t:.1}°C")).unwrap_or_default();
-    let humidity = current.relative_humidity_2m.map(|h| format!("{h:.0}%")).unwrap_or_default();
-    let conditions = current.weather_code.map(weather_description).unwrap_or("Unknown");
-    let wind = current.wind_speed_10m.map(|s| {
-        let dir = current.wind_direction_10m.map(wind_direction).unwrap_or("");
-        format!("{s:.1} km/h {dir}")
-    }).unwrap_or_default();
+    let temp = current
+        .temperature_2m
+        .map(|t| format!("{t:.1}°C"))
+        .unwrap_or_default();
+    let feels = current
+        .apparent_temperature
+        .map(|t| format!("{t:.1}°C"))
+        .unwrap_or_default();
+    let humidity = current
+        .relative_humidity_2m
+        .map(|h| format!("{h:.0}%"))
+        .unwrap_or_default();
+    let conditions = current
+        .weather_code
+        .map(weather_description)
+        .unwrap_or("Unknown");
+    let wind = current
+        .wind_speed_10m
+        .map(|s| {
+            let dir = current.wind_direction_10m.map(wind_direction).unwrap_or("");
+            format!("{s:.1} km/h {dir}")
+        })
+        .unwrap_or_default();
 
     let output = format!(
         "{city_display}\n{conditions}\nTemperature: {temp} (feels like {feels})\nHumidity: {humidity}\nWind: {wind}"
@@ -275,24 +304,56 @@ fn handle_get_forecast(input_json: &str) {
     let city_display = format!(
         "{}{}{}",
         location.name,
-        location.admin1.as_ref().map(|a| format!(", {a}")).unwrap_or_default(),
-        location.country.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
+        location
+            .admin1
+            .as_ref()
+            .map(|a| format!(", {a}"))
+            .unwrap_or_default(),
+        location
+            .country
+            .as_ref()
+            .map(|c| format!(", {c}"))
+            .unwrap_or_default(),
     );
 
     let mut lines = vec![format!("{city_display} — {days}-day forecast")];
 
     for i in 0..daily.time.len() {
         let date = &daily.time[i];
-        let hi = daily.temperature_2m_max.get(i).and_then(|v| *v)
-            .map(|t| format!("{t:.0}°C")).unwrap_or_default();
-        let lo = daily.temperature_2m_min.get(i).and_then(|v| *v)
-            .map(|t| format!("{t:.0}°C")).unwrap_or_default();
-        let cond = daily.weather_code.get(i).and_then(|v| *v)
-            .map(weather_description).unwrap_or("—");
-        let rain = daily.precipitation_sum.get(i).and_then(|v| *v)
-            .map(|p| if p > 0.0 { format!(" | {p:.1}mm") } else { String::new() })
+        let hi = daily
+            .temperature_2m_max
+            .get(i)
+            .and_then(|v| *v)
+            .map(|t| format!("{t:.0}°C"))
             .unwrap_or_default();
-        let wind = daily.wind_speed_10m_max.get(i).and_then(|v| *v)
+        let lo = daily
+            .temperature_2m_min
+            .get(i)
+            .and_then(|v| *v)
+            .map(|t| format!("{t:.0}°C"))
+            .unwrap_or_default();
+        let cond = daily
+            .weather_code
+            .get(i)
+            .and_then(|v| *v)
+            .map(weather_description)
+            .unwrap_or("—");
+        let rain = daily
+            .precipitation_sum
+            .get(i)
+            .and_then(|v| *v)
+            .map(|p| {
+                if p > 0.0 {
+                    format!(" | {p:.1}mm")
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
+        let wind = daily
+            .wind_speed_10m_max
+            .get(i)
+            .and_then(|v| *v)
             .map(|w| format!(" | {w:.0}km/h"))
             .unwrap_or_default();
 

@@ -502,3 +502,119 @@ impl Tool for SystemMetricsTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx() -> Arc<AdminApiContext> {
+        super::super::test_ctx()
+    }
+
+    // -- ViewLogsTool --
+
+    #[test]
+    fn view_logs_metadata() {
+        let tool = ViewLogsTool::new(ctx());
+        assert_eq!(tool.name(), "admin_view_logs");
+        assert!(tool.description().contains("log"));
+        let schema = tool.input_schema();
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["profile_id"]);
+        assert_eq!(schema["properties"]["lines"]["type"], "integer");
+    }
+
+    #[test]
+    fn view_logs_input_defaults() {
+        let v = serde_json::json!({"profile_id": "p1"});
+        let input: ViewLogsInput = serde_json::from_value(v).unwrap();
+        assert_eq!(input.profile_id, "p1");
+        assert_eq!(input.lines, 30); // default_log_lines
+    }
+
+    #[test]
+    fn default_log_lines_is_30() {
+        assert_eq!(default_log_lines(), 30);
+    }
+
+    // -- SystemHealthTool --
+
+    #[test]
+    fn system_health_metadata() {
+        let tool = SystemHealthTool::new(ctx());
+        assert_eq!(tool.name(), "admin_system_health");
+        assert!(tool.description().contains("health"));
+        let schema = tool.input_schema();
+        // No required fields
+        assert!(schema.get("required").is_none());
+        assert!(schema["properties"].as_object().unwrap().is_empty());
+    }
+
+    // -- SystemMetricsTool --
+
+    #[test]
+    fn system_metrics_metadata() {
+        let tool = SystemMetricsTool::new(ctx());
+        assert_eq!(tool.name(), "admin_system_metrics");
+        assert!(tool.description().contains("CPU"));
+        let schema = tool.input_schema();
+        assert!(schema["properties"].as_object().unwrap().is_empty());
+    }
+
+    // -- ProviderMetricsTool --
+
+    #[test]
+    fn provider_metrics_metadata() {
+        let tool = ProviderMetricsTool::new(ctx());
+        assert_eq!(tool.name(), "admin_provider_metrics");
+        let schema = tool.input_schema();
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["profile_id"]);
+    }
+
+    // -- ManageWatchdogTool --
+
+    #[test]
+    fn manage_watchdog_metadata() {
+        let tool = ManageWatchdogTool::new(ctx());
+        assert_eq!(tool.name(), "admin_manage_watchdog");
+        let schema = tool.input_schema();
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["action"]);
+        let enums: Vec<&str> = schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(enums, vec!["status", "enable", "disable"]);
+    }
+
+    #[test]
+    fn watchdog_input_deserialize() {
+        let v = serde_json::json!({"action": "status"});
+        let input: WatchdogInput = serde_json::from_value(v).unwrap();
+        assert_eq!(input.action, "status");
+    }
+
+    #[test]
+    fn watchdog_input_missing_action_fails() {
+        let v = serde_json::json!({});
+        assert!(serde_json::from_value::<WatchdogInput>(v).is_err());
+    }
+}

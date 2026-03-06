@@ -25,6 +25,11 @@ struct Input {
     name: String,
 }
 
+/// Normalize an entity name into a slug: trim, lowercase, spaces to hyphens.
+fn to_slug(name: &str) -> String {
+    name.trim().to_lowercase().replace(' ', "-")
+}
+
 #[async_trait]
 impl Tool for RecallMemoryTool {
     fn name(&self) -> &str {
@@ -53,7 +58,7 @@ impl Tool for RecallMemoryTool {
         let input: Input =
             serde_json::from_value(args.clone()).wrap_err("invalid recall_memory input")?;
 
-        let slug = input.name.trim().to_lowercase().replace(' ', "-");
+        let slug = to_slug(&input.name);
 
         match self.store.read_entity(&slug).await? {
             Some(content) => Ok(ToolResult {
@@ -79,5 +84,71 @@ impl Tool for RecallMemoryTool {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slug_lowercase_and_trim() {
+        assert_eq!(to_slug("  Crew RS  "), "crew-rs");
+    }
+
+    #[test]
+    fn slug_spaces_to_hyphens() {
+        assert_eq!(to_slug("foo bar baz"), "foo-bar-baz");
+    }
+
+    #[test]
+    fn slug_already_normalized() {
+        assert_eq!(to_slug("crew-rs"), "crew-rs");
+    }
+
+    #[test]
+    fn slug_empty_input() {
+        assert_eq!(to_slug(""), "");
+        assert_eq!(to_slug("   "), "");
+    }
+
+    #[test]
+    fn slug_mixed_case_with_hyphens() {
+        assert_eq!(to_slug("My Project"), "my-project");
+    }
+
+    #[test]
+    fn input_deserialization_valid() {
+        let val = serde_json::json!({"name": "crew-rs"});
+        let input: Input = serde_json::from_value(val).unwrap();
+        assert_eq!(input.name, "crew-rs");
+    }
+
+    #[test]
+    fn input_deserialization_missing_name() {
+        let val = serde_json::json!({});
+        assert!(serde_json::from_value::<Input>(val).is_err());
+    }
+
+    #[test]
+    fn schema_has_required_name() {
+        // Construct a temporary store just to test metadata
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            Arc::new(MemoryStore::open(dir.path()).await.unwrap())
+        });
+        let tool = RecallMemoryTool::new(store);
+
+        assert_eq!(tool.name(), "recall_memory");
+
+        let schema = tool.input_schema();
+        let required = schema["required"].as_array().unwrap();
+        assert_eq!(required.len(), 1);
+        assert_eq!(required[0], "name");
+
+        let props = schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("name"));
+        assert_eq!(props["name"]["type"], "string");
     }
 }

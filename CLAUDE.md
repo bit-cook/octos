@@ -95,6 +95,16 @@ SHA-256 hash-based change detection. Hot-reload for system prompt; restart-requi
 - `AgentConfig` (crew-agent): max_iterations (default 50), max_tokens, save_episodes
 - `truncate_utf8`/`truncated_utf8` (crew-core): Shared UTF-8 safe string truncation (in-place and copying variants)
 
+## TDD - Test Driven Development
+
+All code changes follow the RED -> GREEN -> REFACTOR cycle. See `.claude/rules/tdd.md` for full details.
+
+- **New features/bug fixes**: Write a failing test first, then implement
+- **Unit tests**: Inline `#[cfg(test)]` modules in the same file
+- **Integration tests**: `crates/*/tests/` directory, `#[ignore]` for tests needing external services
+- **Verify**: `cargo test -p <crate> <test_name>` after each step, full suite before done
+- **Naming**: `should_<expected>_when_<condition>`
+
 ## Project Conventions
 
 - Edition 2024, rust-version 1.85.0

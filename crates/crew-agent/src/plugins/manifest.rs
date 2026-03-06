@@ -75,4 +75,125 @@ mod tests {
             serde_json::json!({"type": "object"})
         );
     }
+
+    #[test]
+    fn test_all_optional_fields_set() {
+        let json = r#"{
+            "name": "full-plugin",
+            "version": "2.0.0",
+            "tools": [{"name": "t", "description": "d"}],
+            "sha256": "abc123def456",
+            "requires_network": true,
+            "timeout_secs": 30
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.name, "full-plugin");
+        assert_eq!(manifest.sha256.as_deref(), Some("abc123def456"));
+        assert!(manifest.requires_network);
+        assert_eq!(manifest.timeout_secs, Some(30));
+    }
+
+    #[test]
+    fn test_empty_tools_array() {
+        let json = r#"{
+            "name": "no-tools",
+            "version": "1.0.0",
+            "tools": []
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.name, "no-tools");
+        assert!(manifest.tools.is_empty());
+    }
+
+    #[test]
+    fn test_missing_name_fails() {
+        let json = r#"{
+            "version": "1.0.0",
+            "tools": []
+        }"#;
+        let result = serde_json::from_str::<PluginManifest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_version_fails() {
+        let json = r#"{
+            "name": "bad-plugin",
+            "tools": []
+        }"#;
+        let result = serde_json::from_str::<PluginManifest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_tools() {
+        let json = r#"{
+            "name": "multi-tool",
+            "version": "1.0.0",
+            "tools": [
+                {"name": "alpha", "description": "First tool"},
+                {"name": "beta", "description": "Second tool"},
+                {"name": "gamma", "description": "Third tool"}
+            ]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.tools.len(), 3);
+        assert_eq!(manifest.tools[0].name, "alpha");
+        assert_eq!(manifest.tools[1].name, "beta");
+        assert_eq!(manifest.tools[2].name, "gamma");
+    }
+
+    #[test]
+    fn test_complex_nested_input_schema() {
+        let json = r#"{
+            "name": "complex-plugin",
+            "version": "1.0.0",
+            "tools": [{
+                "name": "deploy",
+                "description": "Deploy service",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "service": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "replicas": {"type": "integer", "minimum": 1}
+                            },
+                            "required": ["name"]
+                        },
+                        "env_vars": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "key": {"type": "string"},
+                                    "value": {"type": "string"}
+                                },
+                                "required": ["key", "value"]
+                            }
+                        },
+                        "config": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "object", "additionalProperties": {"type": "string"}}
+                            ]
+                        }
+                    },
+                    "required": ["service"]
+                }
+            }]
+        }"#;
+        let manifest: PluginManifest = serde_json::from_str(json).unwrap();
+        let schema = &manifest.tools[0].input_schema;
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["properties"]["service"]["type"], "object");
+        assert_eq!(schema["properties"]["env_vars"]["type"], "array");
+        assert_eq!(
+            schema["properties"]["env_vars"]["items"]["properties"]["key"]["type"],
+            "string"
+        );
+        assert!(schema["properties"]["config"]["oneOf"].is_array());
+        assert_eq!(schema["required"], serde_json::json!(["service"]));
+    }
 }

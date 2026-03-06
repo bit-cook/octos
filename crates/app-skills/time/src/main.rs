@@ -20,14 +20,20 @@ fn main() {
 
     let mut buf = String::new();
     if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-        println!("{}", json!({"output": format!("Failed to read stdin: {e}"), "success": false}));
+        println!(
+            "{}",
+            json!({"output": format!("Failed to read stdin: {e}"), "success": false})
+        );
         std::process::exit(1);
     }
 
     match tool_name {
         "get_time" => handle_get_time(&buf),
         _ => {
-            println!("{}", json!({"output": format!("Unknown tool '{tool_name}'. Expected: get_time"), "success": false}));
+            println!(
+                "{}",
+                json!({"output": format!("Unknown tool '{tool_name}'. Expected: get_time"), "success": false})
+            );
             std::process::exit(1);
         }
     }

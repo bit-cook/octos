@@ -315,4 +315,89 @@ mod tests {
         assert!(msg.contains("..."));
         assert!(msg.len() < long_body.len() + 100);
     }
+
+    #[test]
+    fn test_unknown_provider() {
+        let err = Error::unknown_provider("foobar");
+        let msg = err.to_string();
+        assert!(msg.contains("foobar"));
+        assert!(msg.contains("Supported providers"));
+    }
+
+    #[test]
+    fn test_tool_error() {
+        let err = Error::tool_error("shell", "command failed");
+        let msg = err.to_string();
+        assert!(msg.contains("shell"));
+        assert!(msg.contains("command failed"));
+    }
+
+    #[test]
+    fn test_config_error() {
+        let err = Error::config_error("missing field");
+        let msg = err.to_string();
+        assert!(msg.contains("missing field"));
+        assert!(msg.contains("valid JSON"));
+    }
+
+    #[test]
+    fn test_timeout_error() {
+        let err = Error::timeout("LLM chat", 30);
+        let msg = err.to_string();
+        assert!(msg.contains("LLM chat"));
+        assert!(msg.contains("30s"));
+        assert!(msg.contains("timeout"));
+    }
+
+    #[test]
+    fn test_llm_error() {
+        let err = Error::llm_error("anthropic", "context too long");
+        let msg = err.to_string();
+        assert!(msg.contains("anthropic"));
+        assert!(msg.contains("context too long"));
+    }
+
+    #[test]
+    fn test_channel_error() {
+        let err = Error::channel_error("slack", "webhook failed");
+        let msg = err.to_string();
+        assert!(msg.contains("slack"));
+        assert!(msg.contains("webhook failed"));
+    }
+
+    #[test]
+    fn test_session_error() {
+        let err = Error::session_error("session not found");
+        let msg = err.to_string();
+        assert!(msg.contains("session not found"));
+    }
+
+    #[test]
+    fn test_with_suggestion() {
+        let err = Error::tool_error("test", "fail").with_suggestion("try again");
+        let msg = err.to_string();
+        assert!(msg.contains("Suggestion: try again"));
+    }
+
+    #[test]
+    fn test_from_serde_json_error() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{{bad").unwrap_err();
+        let err: Error = json_err.into();
+        assert!(matches!(err.kind, ErrorKind::SerializationError(_)));
+    }
+
+    #[test]
+    fn test_source_returns_io_error() {
+        use std::error::Error as StdError;
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let err: Error = io_err.into();
+        assert!(err.source().is_some());
+    }
+
+    #[test]
+    fn test_source_returns_none_for_non_io() {
+        use std::error::Error as StdError;
+        let err = Error::config_error("bad");
+        assert!(err.source().is_none());
+    }
 }

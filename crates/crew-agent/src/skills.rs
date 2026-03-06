@@ -435,6 +435,213 @@ mod tests {
         assert!(with_tools.has_tools);
     }
 
+    // --- Pure function tests for split_frontmatter ---
+
+    #[test]
+    fn test_split_frontmatter_leading_whitespace() {
+        // Leading whitespace before --- should still parse
+        let content = "  \n---\nname: foo\n---\nBody\n";
+        let (fm, body) = split_frontmatter(content);
+        let fm = fm.unwrap();
+        assert_eq!(fm_value(&fm, "name").unwrap(), "foo");
+        assert_eq!(body, "Body\n");
+    }
+
+    #[test]
+    fn test_split_frontmatter_unclosed() {
+        // Only one --- means no valid frontmatter
+        let content = "---\nname: foo\nno closing fence";
+        let (fm, body) = split_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn test_split_frontmatter_empty_body() {
+        let content = "---\nname: foo\n---\n";
+        let (fm, body) = split_frontmatter(content);
+        assert!(fm.is_some());
+        assert!(body.is_empty() || body.trim().is_empty());
+    }
+
+    #[test]
+    fn test_split_frontmatter_empty_frontmatter() {
+        // Empty frontmatter (no lines between ---) doesn't parse because
+        // the parser requires "\n---" which needs at least one line.
+        let content = "---\n---\nBody only\n";
+        let (fm, body) = split_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(body, content);
+    }
+
+    #[test]
+    fn test_split_frontmatter_multiline_body() {
+        let content = "---\nkey: val\n---\nLine 1\nLine 2\nLine 3\n";
+        let (fm, body) = split_frontmatter(content);
+        assert!(fm.is_some());
+        assert!(body.contains("Line 1"));
+        assert!(body.contains("Line 3"));
+    }
+
+    #[test]
+    fn test_split_frontmatter_dashes_in_body() {
+        // --- in the body (not at frontmatter position) should not interfere
+        let content = "---\nname: test\n---\nSome text\n---\nMore text\n";
+        let (fm, body) = split_frontmatter(content);
+        let fm = fm.unwrap();
+        assert_eq!(fm_value(&fm, "name").unwrap(), "test");
+        // Body should contain the --- from the content
+        assert!(body.contains("---"));
+    }
+
+    // --- Pure function tests for fm_value ---
+
+    #[test]
+    fn test_fm_value_missing_key() {
+        let lines = vec!["name: foo".to_string(), "description: bar".to_string()];
+        assert!(fm_value(&lines, "version").is_none());
+    }
+
+    #[test]
+    fn test_fm_value_with_extra_whitespace() {
+        let lines = vec!["  name:   spaced value  ".to_string()];
+        assert_eq!(fm_value(&lines, "name").unwrap(), "spaced value");
+    }
+
+    #[test]
+    fn test_fm_value_empty_value() {
+        let lines = vec!["name:".to_string()];
+        assert_eq!(fm_value(&lines, "name").unwrap(), "");
+    }
+
+    #[test]
+    fn test_fm_value_colon_in_value() {
+        let lines = vec!["description: key: value pair".to_string()];
+        assert_eq!(fm_value(&lines, "description").unwrap(), "key: value pair");
+    }
+
+    #[test]
+    fn test_fm_value_empty_lines() {
+        let lines: Vec<String> = vec![];
+        assert!(fm_value(&lines, "name").is_none());
+    }
+
+    #[test]
+    fn test_fm_value_duplicate_keys_returns_first() {
+        let lines = vec!["name: first".to_string(), "name: second".to_string()];
+        assert_eq!(fm_value(&lines, "name").unwrap(), "first");
+    }
+
+    // --- Pure function tests for strip_frontmatter ---
+
+    #[test]
+    fn test_strip_frontmatter_with_fm() {
+        let content = "---\nname: foo\n---\nBody text\n";
+        assert_eq!(strip_frontmatter(content), "Body text\n");
+    }
+
+    #[test]
+    fn test_strip_frontmatter_without_fm() {
+        let content = "Just plain text\n";
+        assert_eq!(strip_frontmatter(content), "Just plain text\n");
+    }
+
+    #[test]
+    fn test_strip_frontmatter_empty() {
+        assert_eq!(strip_frontmatter(""), "");
+    }
+
+    // --- Pure function tests for parse_skill ---
+
+    #[test]
+    fn test_parse_skill_minimal() {
+        let content = "---\ndescription: A skill\n---\nBody\n";
+        let path = PathBuf::from("/fake/my-skill/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        // Name falls back to parent directory name
+        assert_eq!(info.name, "my-skill");
+        assert_eq!(info.description, "A skill");
+        assert!(!info.always);
+        assert!(info.available);
+        assert!(!info.builtin);
+    }
+
+    #[test]
+    fn test_parse_skill_builtin_flag() {
+        let content = "---\nname: test\ndescription: builtin\n---\nBody\n";
+        let path = PathBuf::from("<builtin>/test/SKILL.md");
+        let info = parse_skill(&path, content, true).unwrap();
+        assert!(info.builtin);
+        // builtins never have has_tools
+        assert!(!info.has_tools);
+    }
+
+    #[test]
+    fn test_parse_skill_no_frontmatter_returns_none() {
+        let content = "Just text, no frontmatter";
+        let path = PathBuf::from("/fake/skill/SKILL.md");
+        assert!(parse_skill(&path, content, false).is_none());
+    }
+
+    #[test]
+    fn test_parse_skill_always_true() {
+        let content = "---\nname: auto\ndescription: runs always\nalways: true\n---\nBody\n";
+        let path = PathBuf::from("/fake/auto/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(info.always);
+    }
+
+    #[test]
+    fn test_parse_skill_always_non_true_is_false() {
+        let content = "---\nname: nope\ndescription: d\nalways: yes\n---\nBody\n";
+        let path = PathBuf::from("/fake/nope/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(!info.always);
+    }
+
+    #[test]
+    fn test_parse_skill_requires_env_missing() {
+        let content = "---\nname: envskill\ndescription: d\nrequires_env: CREW_NONEXISTENT_VAR_XYZ_99\n---\nB\n";
+        let path = PathBuf::from("/fake/envskill/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(!info.available);
+    }
+
+    #[test]
+    fn test_parse_skill_requires_env_multiple_one_missing() {
+        // HOME should exist, but CREW_NONEXISTENT should not
+        let content = "---\nname: envskill\ndescription: d\nrequires_env: HOME, CREW_NONEXISTENT_VAR_XYZ_99\n---\nB\n";
+        let path = PathBuf::from("/fake/envskill/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(!info.available);
+    }
+
+    #[test]
+    fn test_parse_skill_requires_bins_common() {
+        // "ls" should exist on any Unix system
+        let content = "---\nname: bintest\ndescription: d\nrequires_bins: ls\n---\nB\n";
+        let path = PathBuf::from("/fake/bintest/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(info.available);
+    }
+
+    #[test]
+    fn test_parse_skill_requires_bins_missing() {
+        let content = "---\nname: bintest\ndescription: d\nrequires_bins: nonexistent_binary_xyz_999\n---\nB\n";
+        let path = PathBuf::from("/fake/bintest/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert!(!info.available);
+    }
+
+    #[test]
+    fn test_parse_skill_name_fallback_from_path() {
+        // No name in frontmatter, should use parent dir name
+        let content = "---\ndescription: fallback test\n---\nBody\n";
+        let path = PathBuf::from("/data/skills/my-cool-skill/SKILL.md");
+        let info = parse_skill(&path, content, false).unwrap();
+        assert_eq!(info.name, "my-cool-skill");
+    }
+
     #[tokio::test]
     async fn test_multi_dir_priority() {
         // Set up two directories: "global" and "profile"

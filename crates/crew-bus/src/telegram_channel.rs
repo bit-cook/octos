@@ -13,8 +13,8 @@ use eyre::{Result, WrapErr};
 use reqwest::Client;
 use teloxide::prelude::*;
 use teloxide::types::{
-    BotCommand, ChatId, FileId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
-    MessageId, ParseMode, UpdateKind,
+    BotCommand, ChatId, FileId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
+    ParseMode, UpdateKind,
 };
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -155,7 +155,10 @@ impl TelegramChannel {
             for btn in buttons {
                 let text = btn.get("text")?.as_str()?;
                 let data = btn.get("callback_data")?.as_str()?;
-                row_buttons.push(InlineKeyboardButton::callback(text.to_string(), data.to_string()));
+                row_buttons.push(InlineKeyboardButton::callback(
+                    text.to_string(),
+                    data.to_string(),
+                ));
             }
             if !row_buttons.is_empty() {
                 keyboard_rows.push(row_buttons);
@@ -237,7 +240,9 @@ impl Channel for TelegramChannel {
                                 {
                                     Ok(Ok(path)) => media.push(path.display().to_string()),
                                     Ok(Err(e)) => warn!("failed to download photo: {e}"),
-                                    Err(_) => warn!("photo download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                    Err(_) => warn!(
+                                        "photo download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"
+                                    ),
                                 }
                             }
                         }
@@ -251,7 +256,9 @@ impl Channel for TelegramChannel {
                             {
                                 Ok(Ok(path)) => media.push(path.display().to_string()),
                                 Ok(Err(e)) => warn!("failed to download voice: {e}"),
-                                Err(_) => warn!("voice download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                Err(_) => warn!(
+                                    "voice download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"
+                                ),
                             }
                         }
 
@@ -270,7 +277,9 @@ impl Channel for TelegramChannel {
                             {
                                 Ok(Ok(path)) => media.push(path.display().to_string()),
                                 Ok(Err(e)) => warn!("failed to download audio: {e}"),
-                                Err(_) => warn!("audio download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                Err(_) => warn!(
+                                    "audio download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"
+                                ),
                             }
                         }
 
@@ -289,7 +298,9 @@ impl Channel for TelegramChannel {
                             {
                                 Ok(Ok(path)) => media.push(path.display().to_string()),
                                 Ok(Err(e)) => warn!("failed to download document: {e}"),
-                                Err(_) => warn!("document download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"),
+                                Err(_) => warn!(
+                                    "document download timed out after {MEDIA_DOWNLOAD_TIMEOUT:?}"
+                                ),
                             }
                         }
 
@@ -350,10 +361,9 @@ impl Channel for TelegramChannel {
 
                         // Extract chat_id and message_id from the callback's source message
                         let (chat_id, message_id) = match &cb.message {
-                            Some(mim) => (
-                                mim.chat().id.0.to_string(),
-                                Some(mim.id().0.to_string()),
-                            ),
+                            Some(mim) => {
+                                (mim.chat().id.0.to_string(), Some(mim.id().0.to_string()))
+                            }
                             None => continue,
                         };
 
@@ -472,8 +482,7 @@ impl Channel for TelegramChannel {
                     .await
                     .wrap_err("failed to send Telegram message with keyboard")?;
             } else {
-                self.send_html_with_fallback(ChatId(chat_id), &html)
-                    .await?;
+                self.send_html_with_fallback(ChatId(chat_id), &html).await?;
             }
         }
 
@@ -527,8 +536,7 @@ impl Channel for TelegramChannel {
                 .await
                 .wrap_err("failed to send Telegram message with keyboard")?
         } else {
-            self.send_html_with_fallback(ChatId(chat_id), &html)
-                .await?
+            self.send_html_with_fallback(ChatId(chat_id), &html).await?
         };
 
         Ok(Some(sent.id.0.to_string()))
@@ -656,5 +664,74 @@ mod tests {
     fn test_truncate_caption_exact() {
         let exact: String = "a".repeat(CAPTION_MAX_CHARS);
         assert_eq!(TelegramChannel::truncate_caption(&exact), exact);
+    }
+
+    #[test]
+    fn test_channel_name() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.name(), "telegram");
+    }
+
+    #[test]
+    fn test_max_message_length() {
+        let ch = make_channel(vec![]);
+        assert_eq!(ch.max_message_length(), 4000);
+    }
+
+    #[test]
+    fn test_parse_inline_keyboard_valid() {
+        let meta = serde_json::json!({
+            "inline_keyboard": [[
+                {"text": "Option A", "callback_data": "a"},
+                {"text": "Option B", "callback_data": "b"}
+            ]]
+        });
+        let kb = TelegramChannel::parse_inline_keyboard(&meta);
+        assert!(kb.is_some());
+        let kb = kb.unwrap();
+        assert_eq!(kb.inline_keyboard.len(), 1);
+        assert_eq!(kb.inline_keyboard[0].len(), 2);
+    }
+
+    #[test]
+    fn test_parse_inline_keyboard_multiple_rows() {
+        let meta = serde_json::json!({
+            "inline_keyboard": [
+                [{"text": "Row1", "callback_data": "r1"}],
+                [{"text": "Row2", "callback_data": "r2"}]
+            ]
+        });
+        let kb = TelegramChannel::parse_inline_keyboard(&meta).unwrap();
+        assert_eq!(kb.inline_keyboard.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_inline_keyboard_missing() {
+        let meta = serde_json::json!({});
+        assert!(TelegramChannel::parse_inline_keyboard(&meta).is_none());
+    }
+
+    #[test]
+    fn test_parse_inline_keyboard_empty_rows() {
+        let meta = serde_json::json!({"inline_keyboard": []});
+        assert!(TelegramChannel::parse_inline_keyboard(&meta).is_none());
+    }
+
+    #[test]
+    fn test_parse_inline_keyboard_missing_fields() {
+        // Buttons missing callback_data should cause None
+        let meta = serde_json::json!({
+            "inline_keyboard": [[{"text": "Label"}]]
+        });
+        assert!(TelegramChannel::parse_inline_keyboard(&meta).is_none());
+    }
+
+    #[test]
+    fn test_truncate_caption_multibyte() {
+        // Ensure truncation works with multi-byte UTF-8 characters
+        let text: String = "\u{1F600}".repeat(CAPTION_MAX_CHARS + 10);
+        let truncated = TelegramChannel::truncate_caption(&text);
+        assert_eq!(truncated.chars().count(), CAPTION_MAX_CHARS);
+        assert!(truncated.ends_with('\u{2026}')); // ellipsis
     }
 }

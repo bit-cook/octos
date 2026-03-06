@@ -42,6 +42,7 @@ pub struct DeepCrawlTool {
 }
 
 impl DeepCrawlTool {
+    #[allow(dead_code)]
     pub fn new(research_base: impl Into<PathBuf>) -> Self {
         Self {
             research_base: research_base.into(),

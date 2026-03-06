@@ -128,3 +128,133 @@ impl Tool for EditFileTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_edit_file_basic_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("code.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+
+        let tool = EditFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "code.rs",
+                "old_string": "println!(\"hello\")",
+                "new_string": "println!(\"world\")"
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        let content = std::fs::read_to_string(dir.path().join("code.rs")).unwrap();
+        assert!(content.contains("println!(\"world\")"));
+        assert!(!content.contains("println!(\"hello\")"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_string_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "some content").unwrap();
+
+        let tool = EditFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "file.txt",
+                "old_string": "nonexistent string",
+                "new_string": "replacement"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("String not found"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_ambiguous_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("dup.txt"), "foo bar foo baz foo").unwrap();
+
+        let tool = EditFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "dup.txt",
+                "old_string": "foo",
+                "new_string": "qux"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("3 occurrences"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_multiline_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("multi.txt"), "line1\nline2\nline3\n").unwrap();
+
+        let tool = EditFileTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "multi.txt",
+                "old_string": "line2\nline3",
+                "new_string": "replaced2\nreplaced3"
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        let content = std::fs::read_to_string(dir.path().join("multi.txt")).unwrap();
+        assert!(content.contains("replaced2\nreplaced3"));
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = EditFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "nope.txt",
+                "old_string": "a",
+                "new_string": "b"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_edit_file_traversal_blocked() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = EditFileTool::new(dir.path());
+
+        let result = tool
+            .execute(&serde_json::json!({
+                "path": "../../etc/passwd",
+                "old_string": "root",
+                "new_string": "hacked"
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("outside working directory"));
+    }
+
+    #[test]
+    fn test_tool_metadata() {
+        let tool = EditFileTool::new("/tmp");
+        assert_eq!(tool.name(), "edit_file");
+        assert!(tool.tags().contains(&"fs"));
+    }
+}

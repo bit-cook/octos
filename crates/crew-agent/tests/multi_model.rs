@@ -854,7 +854,9 @@ fn test_spawn_input_schema_dynamic_with_router() {
 
     let (tx, _rx) = tokio::sync::mpsc::channel(16);
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new("parent", vec![]));
-    let spawn = SpawnTool::new(llm, Arc::new(stub_store()), "/tmp".into(), tx)
+    let (store, _tmp) = stub_store();
+    let work_dir = tempfile::tempdir().unwrap();
+    let spawn = SpawnTool::new(llm, Arc::new(store), work_dir.path().into(), tx)
         .with_provider_router(Arc::new(router));
 
     let schema = spawn.input_schema();
@@ -893,7 +895,9 @@ fn test_spawn_input_schema_dynamic_with_router() {
 fn test_spawn_input_schema_static_without_router() {
     let (tx, _rx) = tokio::sync::mpsc::channel(16);
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new("parent", vec![]));
-    let spawn = SpawnTool::new(llm, Arc::new(stub_store()), "/tmp".into(), tx);
+    let (store, _tmp) = stub_store();
+    let work_dir = tempfile::tempdir().unwrap();
+    let spawn = SpawnTool::new(llm, Arc::new(store), work_dir.path().into(), tx);
 
     let schema = spawn.input_schema();
     let model_prop = &schema["properties"]["model"];
@@ -1094,7 +1098,9 @@ async fn test_default_system_prompt_without_override() {
 fn test_spawn_input_schema_includes_system_prompt() {
     let (tx, _rx) = tokio::sync::mpsc::channel(16);
     let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new("parent", vec![]));
-    let spawn = SpawnTool::new(llm, Arc::new(stub_store()), "/tmp".into(), tx);
+    let (store, _tmp) = stub_store();
+    let work_dir = tempfile::tempdir().unwrap();
+    let spawn = SpawnTool::new(llm, Arc::new(store), work_dir.path().into(), tx);
 
     let schema = spawn.input_schema();
     let sp_prop = &schema["properties"]["system_prompt"];
@@ -1104,10 +1110,10 @@ fn test_spawn_input_schema_includes_system_prompt() {
 }
 
 /// Helper: create a minimal EpisodeStore for schema tests (doesn't need to persist).
-fn stub_store() -> EpisodeStore {
-    // Use tokio runtime to create the async store synchronously
+/// Returns the TempDir alongside so its lifetime keeps the DB path valid.
+fn stub_store() -> (EpisodeStore, tempfile::TempDir) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let dir = Box::leak(Box::new(dir));
-    rt.block_on(EpisodeStore::open(dir.path())).unwrap()
+    let store = rt.block_on(EpisodeStore::open(dir.path())).unwrap();
+    (store, dir)
 }

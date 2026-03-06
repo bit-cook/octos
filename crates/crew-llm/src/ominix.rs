@@ -122,10 +122,7 @@ impl OminixClient {
             eyre::bail!("ominix-api TTS failed: {status} - {body}");
         }
 
-        let wav_bytes = resp
-            .bytes()
-            .await
-            .wrap_err("failed to read TTS response")?;
+        let wav_bytes = resp.bytes().await.wrap_err("failed to read TTS response")?;
 
         debug!(size = wav_bytes.len(), "TTS audio generated via ominix-api");
         Ok(wav_bytes.to_vec())

@@ -1468,3 +1468,178 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    use crew_core::ToolCall;
+    use crew_llm::{ChatResponse, StopReason, TokenUsage as LlmTokenUsage};
+
+    // ---------- AgentConfig::default ----------
+
+    #[test]
+    fn agent_config_default_values() {
+        let cfg = AgentConfig::default();
+        assert_eq!(cfg.max_iterations, 50);
+        assert_eq!(cfg.max_tokens, None);
+        assert_eq!(cfg.max_timeout, Some(Duration::from_secs(600)));
+        assert!(cfg.save_episodes);
+        assert_eq!(cfg.tool_timeout_secs, 300);
+        assert!(cfg.worker_prompt.is_none());
+    }
+
+    // ---------- TokenTracker ----------
+
+    #[test]
+    fn token_tracker_new_starts_at_zero() {
+        let t = TokenTracker::new();
+        assert_eq!(t.input_tokens.load(Ordering::Relaxed), 0);
+        assert_eq!(t.output_tokens.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn token_tracker_default_starts_at_zero() {
+        let t = TokenTracker::default();
+        assert_eq!(t.input_tokens.load(Ordering::Relaxed), 0);
+        assert_eq!(t.output_tokens.load(Ordering::Relaxed), 0);
+    }
+
+    // ---------- BudgetStop::message ----------
+
+    #[test]
+    fn budget_stop_shutdown_message() {
+        assert_eq!(BudgetStop::Shutdown.message(), "Interrupted.");
+    }
+
+    #[test]
+    fn budget_stop_max_iterations_message() {
+        assert_eq!(
+            BudgetStop::MaxIterations.message(),
+            "Reached max iterations."
+        );
+    }
+
+    #[test]
+    fn budget_stop_max_tokens_message() {
+        let msg = BudgetStop::MaxTokens {
+            used: 1000,
+            limit: 500,
+        }
+        .message();
+        assert!(
+            msg.contains("token") || msg.contains("Token") || msg.contains("TOKEN"),
+            "expected 'token' in: {msg}"
+        );
+        assert!(msg.contains("1000"), "expected '1000' in: {msg}");
+        assert!(msg.contains("500"), "expected '500' in: {msg}");
+    }
+
+    #[test]
+    fn budget_stop_wall_clock_timeout_message() {
+        let msg = BudgetStop::WallClockTimeout {
+            limit: Duration::from_secs(120),
+        }
+        .message();
+        assert!(
+            msg.to_lowercase().contains("timeout"),
+            "expected 'timeout' in: {msg}"
+        );
+    }
+
+    // ---------- Agent::is_empty_response ----------
+
+    fn make_response(
+        content: Option<&str>,
+        tool_calls: Vec<ToolCall>,
+        output_tokens: u32,
+    ) -> ChatResponse {
+        ChatResponse {
+            content: content.map(String::from),
+            reasoning_content: None,
+            tool_calls,
+            stop_reason: StopReason::EndTurn,
+            usage: LlmTokenUsage {
+                input_tokens: 0,
+                output_tokens,
+            },
+        }
+    }
+
+    #[test]
+    fn is_empty_response_true_when_all_empty() {
+        let r = make_response(None, vec![], 0);
+        assert!(Agent::is_empty_response(&r));
+
+        // Empty string content also counts as empty
+        let r2 = make_response(Some(""), vec![], 0);
+        assert!(Agent::is_empty_response(&r2));
+    }
+
+    #[test]
+    fn is_empty_response_false_with_content() {
+        let r = make_response(Some("hello"), vec![], 0);
+        assert!(!Agent::is_empty_response(&r));
+    }
+
+    #[test]
+    fn is_empty_response_false_with_tool_calls() {
+        let tc = ToolCall {
+            id: "1".into(),
+            name: "test".into(),
+            arguments: serde_json::json!({}),
+            metadata: None,
+        };
+        let r = make_response(None, vec![tc], 0);
+        assert!(!Agent::is_empty_response(&r));
+    }
+
+    #[test]
+    fn is_empty_response_false_with_tokens() {
+        let r = make_response(None, vec![], 10);
+        assert!(!Agent::is_empty_response(&r));
+    }
+
+    // ---------- Agent::is_retryable_stream_error ----------
+
+    #[test]
+    fn is_retryable_stream_error_transient_errors() {
+        for keyword in ["overloaded", "429", "503", "rate limit"] {
+            let err = eyre::eyre!("Server error: {}", keyword);
+            assert!(
+                Agent::is_retryable_stream_error(&err),
+                "expected retryable for: {keyword}"
+            );
+        }
+    }
+
+    #[test]
+    fn is_retryable_stream_error_non_retryable() {
+        let err = eyre::eyre!("invalid json");
+        assert!(!Agent::is_retryable_stream_error(&err));
+    }
+
+    // ---------- ConversationResponse derives ----------
+
+    #[test]
+    fn conversation_response_clone_and_debug() {
+        let resp = ConversationResponse {
+            content: "test".into(),
+            token_usage: crew_core::TokenUsage {
+                input_tokens: 10,
+                output_tokens: 20,
+            },
+            files_modified: vec![],
+            streamed: false,
+        };
+        let cloned = resp.clone();
+        assert_eq!(cloned.content, "test");
+        assert_eq!(cloned.token_usage.input_tokens, 10);
+
+        // Debug trait works
+        let debug = format!("{:?}", cloned);
+        assert!(debug.contains("ConversationResponse"));
+    }
+}

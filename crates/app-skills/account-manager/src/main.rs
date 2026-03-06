@@ -490,9 +490,7 @@ fn action_update_by_id(profiles_dir: &Path, parent_id: &str, sub_id: &str, input
         if found {
             changed.push("telegram allowed senders");
         } else {
-            output_error(
-                "No Telegram channel to update senders on. Set telegram_token first.",
-            );
+            output_error("No Telegram channel to update senders on. Set telegram_token first.");
             return;
         }
     }

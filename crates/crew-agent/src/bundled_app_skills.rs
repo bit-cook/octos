@@ -59,3 +59,66 @@ pub const PLATFORM_SKILLS: &[(&str, &str, &str, &str)] = &[(
     include_str!("../../platform-skills/asr/SKILL.md"),
     include_str!("../../platform-skills/asr/manifest.json"),
 )];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundled_app_skills_is_non_empty() {
+        assert!(!BUNDLED_APP_SKILLS.is_empty());
+    }
+
+    #[test]
+    fn bundled_app_skills_entries_have_non_empty_fields() {
+        for &(dir_name, binary_name, skill_md, manifest_json) in BUNDLED_APP_SKILLS {
+            assert!(!dir_name.is_empty(), "dir_name must not be empty");
+            assert!(!binary_name.is_empty(), "binary_name must not be empty");
+            assert!(!skill_md.is_empty(), "skill_md must not be empty");
+            assert!(!manifest_json.is_empty(), "manifest_json must not be empty");
+        }
+    }
+
+    #[test]
+    fn platform_skills_is_non_empty() {
+        assert!(!PLATFORM_SKILLS.is_empty());
+    }
+
+    #[test]
+    fn platform_skills_entries_have_non_empty_fields() {
+        for &(dir_name, binary_name, skill_md, manifest_json) in PLATFORM_SKILLS {
+            assert!(!dir_name.is_empty(), "dir_name must not be empty");
+            assert!(!binary_name.is_empty(), "binary_name must not be empty");
+            assert!(!skill_md.is_empty(), "skill_md must not be empty");
+            assert!(!manifest_json.is_empty(), "manifest_json must not be empty");
+        }
+    }
+
+    #[test]
+    fn manifest_json_entries_are_valid_json() {
+        for &(dir_name, _, _, manifest_json) in
+            BUNDLED_APP_SKILLS.iter().chain(PLATFORM_SKILLS.iter())
+        {
+            let result: Result<serde_json::Value, _> = serde_json::from_str(manifest_json);
+            assert!(
+                result.is_ok(),
+                "manifest.json for '{dir_name}' is not valid JSON: {}",
+                result.unwrap_err()
+            );
+        }
+    }
+
+    #[test]
+    fn skill_md_entries_contain_frontmatter_or_heading() {
+        // Some SKILL.md files use YAML frontmatter (---), others use plain markdown.
+        // All must contain at least a markdown heading (#).
+        for &(dir_name, _, skill_md, _) in BUNDLED_APP_SKILLS.iter().chain(PLATFORM_SKILLS.iter()) {
+            let has_frontmatter = skill_md.contains("---");
+            let has_heading = skill_md.contains('#');
+            assert!(
+                has_frontmatter || has_heading,
+                "SKILL.md for '{dir_name}' should contain frontmatter '---' or a markdown heading '#'"
+            );
+        }
+    }
+}

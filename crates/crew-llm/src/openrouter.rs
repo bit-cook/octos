@@ -393,3 +393,209 @@ struct Usage {
     prompt_tokens: u32,
     completion_tokens: u32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crew_core::{Message, MessageRole};
+
+    fn text_msg(role: MessageRole, content: &str) -> Message {
+        Message {
+            role,
+            content: content.to_string(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_build_api_content_text_only() {
+        let msg = text_msg(MessageRole::User, "hello");
+        let content = build_api_content(&msg);
+        match content {
+            Some(ApiContent::Text(t)) => assert_eq!(t, "hello"),
+            other => panic!("expected Text, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn test_build_api_content_empty_user_gets_placeholder() {
+        let msg = text_msg(MessageRole::User, "");
+        let content = build_api_content(&msg);
+        match content {
+            Some(ApiContent::Text(t)) => assert_eq!(t, "[empty message]"),
+            other => panic!("expected placeholder Text, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn test_build_api_content_empty_assistant_returns_none() {
+        let msg = text_msg(MessageRole::Assistant, "");
+        assert!(build_api_content(&msg).is_none());
+    }
+
+    #[test]
+    fn test_build_api_content_empty_system_returns_none() {
+        let msg = text_msg(MessageRole::System, "");
+        assert!(build_api_content(&msg).is_none());
+    }
+
+    #[test]
+    fn test_build_api_content_with_image() {
+        let dir = tempfile::tempdir().unwrap();
+        // Minimal valid PNG (1x1 pixel)
+        let png_data: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00,
+            0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, 0x54, 0x08,
+            0xD7, 0x63, 0xF8, 0xCF, 0xC0, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0xE2, 0x21, 0xBC,
+            0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+        ];
+        let img_path = dir.path().join("test.png");
+        std::fs::write(&img_path, &png_data).unwrap();
+
+        let msg = Message {
+            role: MessageRole::User,
+            content: "describe this".to_string(),
+            media: vec![img_path.to_string_lossy().to_string()],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        };
+
+        let content = build_api_content(&msg);
+        match content {
+            Some(ApiContent::Parts(parts)) => {
+                assert_eq!(parts.len(), 2); // image + text
+                // First part is ImageUrl
+                match &parts[0] {
+                    ApiContentPart::ImageUrl { image_url } => {
+                        assert!(image_url.url.starts_with("data:image/png;base64,"));
+                    }
+                    _ => panic!("expected ImageUrl first"),
+                }
+                // Second part is text
+                match &parts[1] {
+                    ApiContentPart::Text { text } => assert_eq!(text, "describe this"),
+                    _ => panic!("expected Text second"),
+                }
+            }
+            other => panic!("expected Parts, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn test_provider_metadata() {
+        let provider = OpenRouterProvider::new("test-key", "test-model");
+        assert_eq!(provider.model_id(), "test-model");
+        assert_eq!(provider.provider_name(), "openrouter");
+    }
+
+    #[test]
+    fn test_with_base_url() {
+        let provider =
+            OpenRouterProvider::new("key", "model").with_base_url("http://localhost:8080");
+        assert_eq!(provider.base_url, "http://localhost:8080");
+    }
+
+    #[test]
+    fn test_api_request_serialization() {
+        let msg = ApiMessage {
+            role: "user",
+            content: Some(ApiContent::Text("hi".to_string())),
+            tool_call_id: None,
+            tool_calls: None,
+        };
+        let request = ApiRequest {
+            model: "test",
+            messages: vec![msg],
+            max_tokens: Some(100),
+            temperature: None,
+            tools: None,
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["model"], "test");
+        assert_eq!(json["max_tokens"], 100);
+        assert!(json.get("temperature").is_none());
+        assert!(json.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_api_request_with_tools() {
+        let schema = serde_json::json!({"type": "object"});
+        let tool = ApiTool {
+            r#type: "function",
+            function: ApiFunction {
+                name: "test_fn",
+                description: "A test",
+                parameters: &schema,
+            },
+        };
+        let request = ApiRequest {
+            model: "m",
+            messages: vec![],
+            max_tokens: None,
+            temperature: None,
+            tools: Some(vec![tool]),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["tools"][0]["type"], "function");
+        assert_eq!(json["tools"][0]["function"]["name"], "test_fn");
+    }
+
+    #[test]
+    fn test_api_response_deserialization() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "Hello!",
+                    "tool_calls": null
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5
+            }
+        });
+        let resp: ApiResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.content.as_deref(), Some("Hello!"));
+        assert_eq!(resp.choices[0].finish_reason, "stop");
+        assert_eq!(resp.usage.prompt_tokens, 10);
+        assert_eq!(resp.usage.completion_tokens, 5);
+    }
+
+    #[test]
+    fn test_api_response_with_tool_calls() {
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "function": {
+                            "name": "search",
+                            "arguments": "{\"query\":\"test\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {
+                "prompt_tokens": 15,
+                "completion_tokens": 8
+            }
+        });
+        let resp: ApiResponse = serde_json::from_value(json).unwrap();
+        let tc = resp.choices[0].message.tool_calls.as_ref().unwrap();
+        assert_eq!(tc.len(), 1);
+        assert_eq!(tc[0].id, "call_123");
+        assert_eq!(tc[0].function.name, "search");
+        assert_eq!(tc[0].function.arguments, "{\"query\":\"test\"}");
+    }
+}

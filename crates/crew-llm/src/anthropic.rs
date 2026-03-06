@@ -324,6 +324,7 @@ struct AnthropicStreamState {
     input_tokens: u32,
 }
 
+// Visible for testing
 fn map_anthropic_sse(
     state: &mut AnthropicStreamState,
     event: &crate::sse::SseEvent,
@@ -420,5 +421,213 @@ fn map_anthropic_sse(
             ]
         }
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crew_core::{Message, MessageRole};
+
+    fn msg(role: MessageRole, content: &str) -> Message {
+        Message {
+            role,
+            content: content.to_string(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    // --- build_anthropic_content tests ---
+
+    #[test]
+    fn test_build_content_text_only() {
+        let m = msg(MessageRole::User, "hello");
+        let content = build_anthropic_content(&m);
+        match content {
+            AnthropicContent::Text(t) => assert_eq!(t, "hello"),
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn test_build_content_with_non_image_media() {
+        let m = Message {
+            role: MessageRole::User,
+            content: "check this".into(),
+            media: vec!["file.txt".into(), "data.csv".into()],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        };
+        // Non-image media should fall through to Text
+        let content = build_anthropic_content(&m);
+        match content {
+            AnthropicContent::Text(t) => assert_eq!(t, "check this"),
+            _ => panic!("expected Text for non-image media"),
+        }
+    }
+
+    // --- build_request tests ---
+
+    #[test]
+    fn test_build_request_filters_system() {
+        let provider = AnthropicProvider::new("test-key", "claude-test");
+        let messages = vec![
+            msg(MessageRole::System, "system prompt"),
+            msg(MessageRole::User, "hello"),
+            msg(MessageRole::Assistant, "hi"),
+        ];
+        let config = ChatConfig::default();
+        let request = provider.build_request(&messages, &[], &config);
+
+        // System message should be extracted, not in messages array
+        assert_eq!(request.system, Some("system prompt"));
+        assert_eq!(request.messages.len(), 2); // user + assistant only
+        assert_eq!(request.messages[0].role, "user");
+        assert_eq!(request.messages[1].role, "assistant");
+    }
+
+    #[test]
+    fn test_build_request_tool_role_mapped_to_user() {
+        let provider = AnthropicProvider::new("test-key", "claude-test");
+        let messages = vec![Message {
+            role: MessageRole::Tool,
+            content: "tool result".into(),
+            media: vec![],
+            tool_calls: None,
+            tool_call_id: Some("tc1".into()),
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        }];
+        let config = ChatConfig::default();
+        let request = provider.build_request(&messages, &[], &config);
+
+        assert_eq!(request.messages[0].role, "user");
+    }
+
+    #[test]
+    fn test_build_request_tools_none_when_empty() {
+        let provider = AnthropicProvider::new("test-key", "claude-test");
+        let messages = vec![msg(MessageRole::User, "hi")];
+        let config = ChatConfig::default();
+        let request = provider.build_request(&messages, &[], &config);
+        assert!(request.tools.is_none());
+    }
+
+    #[test]
+    fn test_build_request_default_max_tokens() {
+        let provider = AnthropicProvider::new("test-key", "claude-test");
+        let messages = vec![msg(MessageRole::User, "hi")];
+        let config = ChatConfig::default();
+        let request = provider.build_request(&messages, &[], &config);
+        assert_eq!(request.max_tokens, 4096);
+    }
+
+    // --- SSE mapping tests ---
+
+    #[test]
+    fn test_sse_message_start() {
+        let mut state = AnthropicStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"type": "message_start", "message": {"usage": {"input_tokens": 42}}}"#.into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert!(events.is_empty());
+        assert_eq!(state.input_tokens, 42);
+    }
+
+    #[test]
+    fn test_sse_text_delta() {
+        let mut state = AnthropicStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}"#.into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::TextDelta(t) if t == "Hello"));
+    }
+
+    #[test]
+    fn test_sse_tool_call_start() {
+        let mut state = AnthropicStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tc1", "name": "shell"}}"#.into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::ToolCallDelta {
+                index, id, name, ..
+            } => {
+                assert_eq!(*index, 0);
+                assert_eq!(id.as_deref(), Some("tc1"));
+                assert_eq!(name.as_deref(), Some("shell"));
+            }
+            _ => panic!("expected ToolCallDelta"),
+        }
+        assert_eq!(state.tool_count, 1);
+    }
+
+    #[test]
+    fn test_sse_message_delta_end_turn() {
+        let mut state = AnthropicStreamState::default();
+        state.input_tokens = 100;
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: r#"{"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 50}}"#.into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert_eq!(events.len(), 2);
+        assert!(
+            matches!(&events[0], StreamEvent::Usage(u) if u.input_tokens == 100 && u.output_tokens == 50)
+        );
+        assert!(matches!(&events[1], StreamEvent::Done(StopReason::EndTurn)));
+    }
+
+    #[test]
+    fn test_sse_error_event() {
+        let mut state = AnthropicStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: Some("error".into()),
+            data: r#"{"error": {"message": "rate limited"}}"#.into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::Error(msg) if msg == "rate limited"));
+    }
+
+    #[test]
+    fn test_sse_invalid_json_returns_empty() {
+        let mut state = AnthropicStreamState::default();
+        let event = crate::sse::SseEvent {
+            event: None,
+            data: "not json".into(),
+        };
+        let events = map_anthropic_sse(&mut state, &event);
+        assert!(events.is_empty());
+    }
+
+    // --- Provider metadata tests ---
+
+    #[test]
+    fn test_provider_name_and_model() {
+        let provider = AnthropicProvider::new("test-key", "claude-3-haiku");
+        assert_eq!(provider.provider_name(), "anthropic");
+        assert_eq!(provider.model_id(), "claude-3-haiku");
+    }
+
+    #[test]
+    fn test_with_base_url() {
+        let provider =
+            AnthropicProvider::new("key", "model").with_base_url("https://custom.api.com");
+        assert_eq!(provider.base_url, "https://custom.api.com");
     }
 }

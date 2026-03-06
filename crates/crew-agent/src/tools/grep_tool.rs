@@ -238,3 +238,155 @@ impl Tool for GrepTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_project(dir: &std::path::Path) {
+        std::fs::write(
+            dir.join("main.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("lib.rs"),
+            "pub fn greet() -> &'static str {\n    \"hello\"\n}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("readme.txt"), "This is a readme file.\n").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_grep_finds_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project(dir.path());
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "hello"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("hello"));
+        assert!(result.output.contains("match"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project(dir.path());
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "nonexistent_string_xyz"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("No matches"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_with_file_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_project(dir.path());
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "hello", "file_pattern": "*.rs"}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        // Should find matches in .rs files but not readme.txt
+        assert!(!result.output.contains("readme.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("test.txt"),
+            "Hello World\nhello world\nHELLO WORLD\n",
+        )
+        .unwrap();
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "hello", "ignore_case": true}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("3 match"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_with_context() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ctx.txt"), "before\ntarget line\nafter\n").unwrap();
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "target", "context": 1}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("before"));
+        assert!(result.output.contains("target line"));
+        assert!(result.output.contains("after"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_respects_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let content: String = (0..20).map(|i| format!("match line {i}\n")).collect();
+        std::fs::write(dir.path().join("many.txt"), &content).unwrap();
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "match", "limit": 5}))
+            .await
+            .unwrap();
+
+        assert!(result.success);
+        assert!(result.output.contains("5 match"));
+        assert!(result.output.contains("limited to 5"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_rejects_traversal_in_file_pattern() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "test", "file_pattern": "../../*.txt"}))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("not allowed"));
+    }
+
+    #[tokio::test]
+    async fn test_grep_invalid_regex() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("test.txt"), "data").unwrap();
+
+        let tool = GrepTool::new(dir.path());
+        let result = tool
+            .execute(&serde_json::json!({"pattern": "[invalid"}))
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_metadata() {
+        let tool = GrepTool::new("/tmp");
+        assert_eq!(tool.name(), "grep");
+        assert!(tool.tags().contains(&"search"));
+    }
+}

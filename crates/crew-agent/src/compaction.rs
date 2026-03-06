@@ -315,23 +315,38 @@ mod tests {
 
     #[test]
     fn test_find_recent_boundary_tool_pairing() {
-        // system + [user, assistant(tool), tool, user, assistant, user, assistant]
-        let messages = vec![
-            system_msg("system prompt"),
-            user_msg("first"),
-            assistant_tool_call("read_file", "tc1"),
-            tool_result("tc1", "content"),
-            user_msg("second"),
-            assistant_msg("response"),
-            user_msg("third"),
-            assistant_msg("final"),
-        ];
-
-        let split = find_recent_boundary(&messages, 100000, 100);
-        // split should not land on the Tool message (index 3)
-        if split > 1 {
-            assert_ne!(messages[split].role, MessageRole::Tool);
+        // Build enough messages so that a tight budget forces compaction (split > 1).
+        // system + 10 user/assistant pairs + tool pair in the middle
+        let mut messages = vec![system_msg("system prompt")];
+        for i in 0..5 {
+            messages.push(user_msg(&format!(
+                "question {} with enough text to use tokens",
+                i
+            )));
+            messages.push(assistant_msg(&format!(
+                "answer {} with enough text to use tokens",
+                i
+            )));
         }
+        // Insert a tool call pair
+        messages.push(assistant_tool_call("read_file", "tc1"));
+        messages.push(tool_result("tc1", "file content here"));
+        for i in 5..10 {
+            messages.push(user_msg(&format!(
+                "question {} with enough text to use tokens",
+                i
+            )));
+            messages.push(assistant_msg(&format!(
+                "answer {} with enough text to use tokens",
+                i
+            )));
+        }
+
+        // Use a small budget so split is forced past index 1
+        let split = find_recent_boundary(&messages, 200, 50);
+        assert!(split > 1, "budget should force compaction, split={split}");
+        // split should not land on a Tool message
+        assert_ne!(messages[split].role, MessageRole::Tool);
     }
 
     #[test]
@@ -361,5 +376,76 @@ mod tests {
         let msg = tool_result("nonexistent", "data");
         let name = find_tool_name(&msg, &[]);
         assert_eq!(name, "unknown_tool");
+    }
+
+    #[test]
+    fn test_summarize_user_message() {
+        let msg = user_msg("Hello world");
+        let summary = summarize_message(&msg, &[]);
+        assert_eq!(summary, "> User: Hello world");
+    }
+
+    #[test]
+    fn test_summarize_user_message_with_media() {
+        let msg = Message {
+            role: MessageRole::User,
+            content: "Check this".to_string(),
+            media: vec!["img.png".to_string()],
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: None,
+            timestamp: chrono::Utc::now(),
+        };
+        let summary = summarize_message(&msg, &[]);
+        assert!(summary.contains("[media omitted]"));
+        assert!(summary.contains("Check this"));
+    }
+
+    #[test]
+    fn test_summarize_assistant_text() {
+        let msg = assistant_msg("Here is your answer");
+        let summary = summarize_message(&msg, &[]);
+        assert_eq!(summary, "> Assistant: Here is your answer");
+    }
+
+    #[test]
+    fn test_summarize_assistant_tool_call() {
+        let msg = assistant_tool_call("read_file", "tc1");
+        let summary = summarize_message(&msg, &[]);
+        assert!(summary.contains("Called read_file"));
+    }
+
+    #[test]
+    fn test_summarize_tool_result_ok() {
+        let context = vec![assistant_tool_call("grep", "tc1")];
+        let msg = tool_result("tc1", "found 3 matches");
+        let summary = summarize_message(&msg, &context);
+        assert!(summary.contains("-> grep: ok"));
+    }
+
+    #[test]
+    fn test_summarize_tool_result_error() {
+        let context = vec![assistant_tool_call("shell", "tc1")];
+        let msg = tool_result("tc1", "Error: command not found");
+        let summary = summarize_message(&msg, &context);
+        assert!(summary.contains("-> shell: error"));
+    }
+
+    #[test]
+    fn test_summarize_system_message() {
+        let msg = system_msg("You are a coding assistant");
+        let summary = summarize_message(&msg, &[]);
+        assert_eq!(summary, "> Context: You are a coding assistant");
+    }
+
+    #[test]
+    fn test_first_line_multiline() {
+        let text = "first line\nsecond line\nthird line";
+        assert_eq!(first_line(text, 200), "first line");
+    }
+
+    #[test]
+    fn test_first_line_empty() {
+        assert_eq!(first_line("", 200), "");
     }
 }

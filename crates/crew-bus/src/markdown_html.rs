@@ -290,8 +290,8 @@ fn strip_heading(line: &str) -> Option<&str> {
         return None;
     }
     let rest = &trimmed[hashes..];
-    if rest.starts_with(' ') {
-        Some(rest[1..].trim_end())
+    if let Some(after_space) = rest.strip_prefix(' ') {
+        Some(after_space.trim_end())
     } else if rest.is_empty() {
         Some("")
     } else {

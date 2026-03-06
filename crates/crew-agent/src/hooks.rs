@@ -577,28 +577,58 @@ mod tests {
         assert!(json.contains("\"session_id\":\"s1\""));
     }
 
-    #[test]
-    fn test_circuit_breaker_tracking() {
+    #[tokio::test]
+    async fn test_circuit_breaker_tracking() {
+        // A hook at the failure threshold should be skipped (not executed).
+        // Use a command that would fail if actually run.
         let executor = HookExecutor::new(vec![HookConfig {
             event: HookEvent::AfterToolCall,
-            command: vec!["true".into()],
+            command: vec!["false".into()], // would fail if executed
             timeout_ms: 1000,
             tool_filter: vec![],
         }]);
+        // Set failures at threshold so circuit breaker trips
         executor.failures[0].store(3, Ordering::Relaxed);
-        assert!(executor.failures[0].load(Ordering::Relaxed) >= executor.failure_threshold);
+
+        let payload = HookPayload {
+            event: HookEvent::AfterToolCall,
+            tool_name: Some("test".into()),
+            arguments: None,
+            tool_id: None,
+            result: None,
+            success: None,
+            duration_ms: None,
+            message_count: None,
+            model: None,
+            iteration: None,
+            stop_reason: None,
+            has_tool_calls: None,
+            input_tokens: None,
+            output_tokens: None,
+            session_id: None,
+            profile_id: None,
+            cumulative_input_tokens: None,
+            cumulative_output_tokens: None,
+            session_cost: None,
+            response_cost: None,
+            provider_name: None,
+            latency_ms: None,
+        };
+        let result = executor.run(HookEvent::AfterToolCall, &payload).await;
+        // Hook should be skipped (circuit broken), not denied
+        assert!(matches!(result, HookResult::Allow));
     }
 
     #[test]
-    fn test_tool_filter_matching() {
+    fn test_tool_filter_config() {
         let hook = HookConfig {
             event: HookEvent::BeforeToolCall,
             command: vec!["check".into()],
             timeout_ms: 1000,
             tool_filter: vec!["shell".into(), "write_file".into()],
         };
-        assert!(hook.tool_filter.iter().any(|f| f == "shell"));
-        assert!(!hook.tool_filter.iter().any(|f| f == "read_file"));
+        assert!(hook.tool_filter.contains(&"shell".to_string()));
+        assert!(!hook.tool_filter.contains(&"read_file".to_string()));
     }
 
     #[test]

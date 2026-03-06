@@ -571,6 +571,8 @@ struct McpToolDef {
 mod tests {
     use super::*;
 
+    // --- SSE parsing ---
+
     #[test]
     fn test_parse_sse_json_rpc() {
         let body =
@@ -594,6 +596,21 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_sse_returns_last_data_line() {
+        let body = "data: {\"id\":1}\ndata: {\"id\":2}\n\n";
+        let result = parse_sse_json_rpc(body).unwrap();
+        assert!(result.contains("\"id\":2"));
+    }
+
+    #[test]
+    fn test_parse_sse_no_data_prefix() {
+        let body = "id: 1\nevent: open\n\n";
+        assert!(parse_sse_json_rpc(body).is_err());
+    }
+
+    // --- Config deserialization ---
+
+    #[test]
     fn test_config_deser_stdio() {
         let json = r#"{"command": "npx", "args": ["-y", "mcp-server"]}"#;
         let config: McpServerConfig = serde_json::from_str(json).unwrap();
@@ -611,5 +628,235 @@ mod tests {
         assert_eq!(config.url.as_deref(), Some("https://mcp.example.com/sse"));
         assert_eq!(config.headers.get("Authorization").unwrap(), "Bearer tok");
         assert_eq!(config.display_name(), "https://mcp.example.com/sse");
+    }
+
+    #[test]
+    fn test_config_display_name_no_command_no_url() {
+        let config = McpServerConfig {
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: None,
+            headers: HashMap::new(),
+        };
+        assert_eq!(config.display_name(), "unknown");
+    }
+
+    #[test]
+    fn test_config_defaults() {
+        let json = r#"{}"#;
+        let config: McpServerConfig = serde_json::from_str(json).unwrap();
+        assert!(config.command.is_none());
+        assert!(config.args.is_empty());
+        assert!(config.env.is_empty());
+        assert!(config.url.is_none());
+        assert!(config.headers.is_empty());
+    }
+
+    // --- Schema validation ---
+
+    #[test]
+    fn test_validate_schema_simple_object() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "count": {"type": "integer"}
+            }
+        });
+        assert!(validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_empty_object() {
+        let schema = serde_json::json!({"type": "object"});
+        assert!(validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_at_max_depth() {
+        // Build a nested object exactly at depth 10.
+        // Each wrapping adds 1 level: the leaf {"type":"string"} adds 2
+        // (object level + scalar value level), so 9 wrappings -> depth 10.
+        let mut schema = serde_json::json!({"type": "string"});
+        for _ in 0..9 {
+            schema = serde_json::json!({"nested": schema});
+        }
+        assert!(validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_exceeds_max_depth() {
+        // Build a nested object at depth 11 (exceeds MAX_SCHEMA_DEPTH=10)
+        let mut schema = serde_json::json!({"type": "string"});
+        for _ in 0..11 {
+            schema = serde_json::json!({"nested": schema});
+        }
+        assert!(!validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_array_depth() {
+        // Arrays also contribute to depth
+        let mut schema = serde_json::json!({"type": "string"});
+        for _ in 0..11 {
+            schema = serde_json::json!([schema]);
+        }
+        assert!(!validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_exceeds_max_size() {
+        // Build a schema larger than 64KB
+        let mut props = serde_json::Map::new();
+        for i in 0..2000 {
+            props.insert(
+                format!("field_{i}_with_a_long_name_padding"),
+                serde_json::json!({"type": "string", "description": "x".repeat(30)}),
+            );
+        }
+        let schema = serde_json::Value::Object(props);
+        assert!(!validate_schema(&schema));
+    }
+
+    #[test]
+    fn test_validate_schema_scalar_values() {
+        assert!(validate_schema(&serde_json::json!(null)));
+        assert!(validate_schema(&serde_json::json!(42)));
+        assert!(validate_schema(&serde_json::json!("hello")));
+        assert!(validate_schema(&serde_json::json!(true)));
+    }
+
+    // --- JSON-RPC serialization/deserialization ---
+
+    #[test]
+    fn test_jsonrpc_request_serialization() {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: 42,
+            method: "tools/list".into(),
+            params: serde_json::json!({}),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["id"], 42);
+        assert_eq!(json["method"], "tools/list");
+        assert_eq!(json["params"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_jsonrpc_response_with_result() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, 1);
+        assert!(resp.result.is_some());
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn test_jsonrpc_response_with_error() {
+        let json =
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, 1);
+        assert!(resp.result.is_none());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32601);
+        assert_eq!(err.message, "Method not found");
+    }
+
+    #[test]
+    fn test_jsonrpc_response_null_result() {
+        let json = r#"{"jsonrpc":"2.0","id":1,"result":null}"#;
+        let resp: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        // serde deserializes `null` as None for Option<Value>
+        assert!(resp.result.is_none());
+    }
+
+    // --- MCP tool definition deserialization ---
+
+    #[test]
+    fn test_mcp_tool_def_full() {
+        let json = r#"{"name":"read","description":"Read a file","inputSchema":{"type":"object","properties":{"path":{"type":"string"}}}}"#;
+        let def: McpToolDef = serde_json::from_str(json).unwrap();
+        assert_eq!(def.name, "read");
+        assert_eq!(def.description.as_deref(), Some("Read a file"));
+        assert!(def.input_schema.is_some());
+    }
+
+    #[test]
+    fn test_mcp_tool_def_minimal() {
+        let json = r#"{"name":"ping"}"#;
+        let def: McpToolDef = serde_json::from_str(json).unwrap();
+        assert_eq!(def.name, "ping");
+        assert!(def.description.is_none());
+        assert!(def.input_schema.is_none());
+    }
+
+    #[test]
+    fn test_mcp_tool_list_response() {
+        let json = r#"{"tools":[{"name":"a"},{"name":"b","description":"tool b"}]}"#;
+        let resp: McpToolListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.tools.len(), 2);
+        assert_eq!(resp.tools[0].name, "a");
+        assert_eq!(resp.tools[1].name, "b");
+    }
+
+    // --- BLOCKED_ENV_VARS filtering ---
+
+    #[test]
+    fn test_blocked_env_vars_contains_known_dangerous_vars() {
+        let expected = [
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+            "NODE_OPTIONS",
+            "PYTHONSTARTUP",
+            "BASH_ENV",
+        ];
+        for var in &expected {
+            assert!(
+                BLOCKED_ENV_VARS.iter().any(|b| b == var),
+                "{var} should be in BLOCKED_ENV_VARS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_blocked_env_vars_filtering_logic() {
+        // Reproduce the filtering logic from start_stdio_server
+        let env: HashMap<String, String> = [
+            ("SAFE_VAR".into(), "ok".into()),
+            ("LD_PRELOAD".into(), "evil.so".into()),
+            ("NODE_OPTIONS".into(), "--require=bad".into()),
+            ("MY_TOKEN".into(), "secret".into()),
+        ]
+        .into_iter()
+        .collect();
+
+        let allowed: Vec<&String> = env
+            .keys()
+            .filter(|k| {
+                !BLOCKED_ENV_VARS
+                    .iter()
+                    .any(|blocked| k.eq_ignore_ascii_case(blocked))
+            })
+            .collect();
+
+        assert!(allowed.contains(&&"SAFE_VAR".to_string()));
+        assert!(allowed.contains(&&"MY_TOKEN".to_string()));
+        assert!(!allowed.contains(&&"LD_PRELOAD".to_string()));
+        assert!(!allowed.contains(&&"NODE_OPTIONS".to_string()));
+    }
+
+    #[test]
+    fn test_blocked_env_vars_case_insensitive() {
+        let key = "ld_preload";
+        assert!(
+            BLOCKED_ENV_VARS
+                .iter()
+                .any(|blocked| key.eq_ignore_ascii_case(blocked)),
+            "filtering should be case-insensitive"
+        );
     }
 }

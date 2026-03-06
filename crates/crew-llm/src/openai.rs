@@ -69,10 +69,8 @@ impl ModelHints {
         let uses_completion_tokens =
             is_o_series || m.starts_with("gpt-5") || m.starts_with("gpt-4.1");
 
-        let fixed_temperature = is_o_series
-            || m.contains("k2.5")
-            || m == "gpt-5-nano"
-            || m == "gpt-4.1-nano";
+        let fixed_temperature =
+            is_o_series || m.contains("k2.5") || m == "gpt-5-nano" || m == "gpt-4.1-nano";
 
         let lacks_vision = m.starts_with("deepseek")
             || m.starts_with("minimax")

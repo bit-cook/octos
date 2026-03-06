@@ -740,7 +740,10 @@ mod tests {
                     error_msg: "",
                 }),
             ],
-            AdaptiveConfig::default(),
+            AdaptiveConfig {
+                probe_probability: 0.0, // Disable probes for determinism
+                ..Default::default()
+            },
         );
 
         let resp = router.chat(&[], &[], &ChatConfig::default()).await.unwrap();

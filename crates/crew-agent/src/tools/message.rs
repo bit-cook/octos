@@ -174,7 +174,7 @@ fn is_thinking_filler(s: &str) -> bool {
         "让我看看",
     ];
     let clean = s.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '…');
-    FILLER_PATTERNS.iter().any(|p| clean == *p)
+    FILLER_PATTERNS.contains(&clean)
 }
 
 #[cfg(test)]

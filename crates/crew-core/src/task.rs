@@ -217,4 +217,136 @@ mod tests {
         assert_eq!(usage.input_tokens, 0);
         assert_eq!(usage.output_tokens, 0);
     }
+
+    #[test]
+    fn test_task_kind_plan_serde() {
+        let kind = TaskKind::Plan {
+            goal: "deploy app".to_string(),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains("plan"));
+        assert!(json.contains("deploy app"));
+        let parsed: TaskKind = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, TaskKind::Plan { .. }));
+    }
+
+    #[test]
+    fn test_task_kind_review_serde() {
+        let kind = TaskKind::Review {
+            diff: "+line1\n-line2".to_string(),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains("review"));
+        let parsed: TaskKind = serde_json::from_str(&json).unwrap();
+        match parsed {
+            TaskKind::Review { diff } => assert!(diff.contains("+line1")),
+            _ => panic!("expected Review"),
+        }
+    }
+
+    #[test]
+    fn test_task_kind_test_serde() {
+        let kind = TaskKind::Test {
+            command: "cargo test".to_string(),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains("\"test\""));
+        let parsed: TaskKind = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, TaskKind::Test { .. }));
+    }
+
+    #[test]
+    fn test_task_kind_custom_serde() {
+        let kind = TaskKind::Custom {
+            name: "deploy".to_string(),
+            params: serde_json::json!({"env": "staging"}),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        assert!(json.contains("custom"));
+        let parsed: TaskKind = serde_json::from_str(&json).unwrap();
+        match parsed {
+            TaskKind::Custom { name, params } => {
+                assert_eq!(name, "deploy");
+                assert_eq!(params["env"], "staging");
+            }
+            _ => panic!("expected Custom"),
+        }
+    }
+
+    #[test]
+    fn test_task_status_blocked_serde() {
+        let status = TaskStatus::Blocked {
+            reason: "waiting for review".to_string(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("blocked"));
+        let parsed: TaskStatus = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, TaskStatus::Blocked { .. }));
+    }
+
+    #[test]
+    fn test_task_status_failed_serde() {
+        let status = TaskStatus::Failed {
+            error: "timeout".to_string(),
+        };
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("failed"));
+        let parsed: TaskStatus = serde_json::from_str(&json).unwrap();
+        match parsed {
+            TaskStatus::Failed { error } => assert_eq!(error, "timeout"),
+            _ => panic!("expected Failed"),
+        }
+    }
+
+    #[test]
+    fn test_task_status_completed_serde() {
+        let status = TaskStatus::Completed;
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(json.contains("completed"));
+        let parsed: TaskStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, TaskStatus::Completed);
+    }
+
+    #[test]
+    fn test_task_result_serde() {
+        let result = TaskResult {
+            success: true,
+            output: "all tests pass".to_string(),
+            files_modified: vec![PathBuf::from("src/main.rs")],
+            subtasks: vec![],
+            token_usage: TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: TaskResult = serde_json::from_str(&json).unwrap();
+        assert!(parsed.success);
+        assert_eq!(parsed.output, "all tests pass");
+        assert_eq!(parsed.token_usage.input_tokens, 100);
+    }
+
+    #[test]
+    fn test_task_context_default() {
+        let ctx = TaskContext::default();
+        assert_eq!(ctx.working_dir, PathBuf::new());
+        assert!(ctx.git_state.is_none());
+        assert!(ctx.working_memory.is_empty());
+        assert!(ctx.episodic_refs.is_empty());
+        assert!(ctx.files_in_scope.is_empty());
+    }
+
+    #[test]
+    fn test_git_state_serde() {
+        let state = GitState {
+            branch: "main".to_string(),
+            has_uncommitted_changes: true,
+            head_commit: Some("abc123".to_string()),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let parsed: GitState = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.branch, "main");
+        assert!(parsed.has_uncommitted_changes);
+        assert_eq!(parsed.head_commit.as_deref(), Some("abc123"));
+    }
 }

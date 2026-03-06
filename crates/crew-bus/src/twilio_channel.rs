@@ -602,4 +602,92 @@ mod tests {
         );
         assert!(ch2.check_allowed("+15550000000"));
     }
+
+    #[test]
+    fn test_channel_name() {
+        let ch = TwilioChannel::new(
+            "ACtest",
+            "token",
+            "+15551234567",
+            vec![],
+            Arc::new(AtomicBool::new(false)),
+            PathBuf::from("/tmp"),
+            8090,
+        );
+        assert_eq!(ch.name(), "twilio");
+    }
+
+    #[test]
+    fn test_max_message_length() {
+        let ch = TwilioChannel::new(
+            "ACtest",
+            "token",
+            "+15551234567",
+            vec![],
+            Arc::new(AtomicBool::new(false)),
+            PathBuf::from("/tmp"),
+            8090,
+        );
+        assert_eq!(ch.max_message_length(), 1600);
+    }
+
+    #[test]
+    fn test_sha1_empty() {
+        let hash = sha1(b"");
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+    }
+
+    #[test]
+    fn test_sha1_hello() {
+        let hash = sha1(b"hello");
+        let hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(hex, "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d");
+    }
+
+    #[test]
+    fn test_ext_from_content_type_all() {
+        assert_eq!(ext_from_content_type("image/gif"), ".gif");
+        assert_eq!(ext_from_content_type("image/webp"), ".webp");
+        assert_eq!(ext_from_content_type("audio/mp3"), ".mp3");
+        assert_eq!(ext_from_content_type("audio/mp4"), ".m4a");
+        assert_eq!(ext_from_content_type("video/3gpp"), ".3gp");
+    }
+
+    #[test]
+    fn test_clean_number_plain() {
+        assert_eq!(TwilioChannel::clean_number("12345"), "12345");
+    }
+
+    #[test]
+    fn test_base64_encode_longer() {
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+        assert_eq!(base64_encode(b"Ma"), "TWE=");
+        assert_eq!(base64_encode(b"M"), "TQ==");
+    }
+
+    #[test]
+    fn test_verify_signature_matching() {
+        // Compute what the signature should be for known inputs
+        let auth_token = "mytoken";
+        let url = "https://example.com/webhook";
+        let params = vec![
+            ("Body".to_string(), "Hello".to_string()),
+            ("From".to_string(), "+1234".to_string()),
+        ];
+
+        let sig1 = {
+            let mut sorted = params.clone();
+            sorted.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut data = url.to_string();
+            for (k, v) in &sorted {
+                data.push_str(k);
+                data.push_str(v);
+            }
+            base64_encode(&hmac_sha1(auth_token.as_bytes(), data.as_bytes()))
+        };
+
+        assert!(verify_twilio_signature(auth_token, url, &params, &sig1));
+        assert!(!verify_twilio_signature(auth_token, url, &params, "wrong"));
+    }
 }

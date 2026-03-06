@@ -632,4 +632,250 @@ mod tests {
             );
         }
     }
+
+    // --- SandboxMode enum tests ---
+
+    #[test]
+    fn test_sandbox_mode_default_is_auto() {
+        assert_eq!(SandboxMode::default(), SandboxMode::Auto);
+    }
+
+    #[test]
+    fn test_sandbox_mode_serde_roundtrip() {
+        let modes = [
+            (SandboxMode::Auto, "\"auto\""),
+            (SandboxMode::Bwrap, "\"bwrap\""),
+            (SandboxMode::Macos, "\"macos\""),
+            (SandboxMode::Docker, "\"docker\""),
+            (SandboxMode::None, "\"none\""),
+        ];
+        for (mode, expected_json) in &modes {
+            let json = serde_json::to_string(mode).unwrap();
+            assert_eq!(&json, expected_json, "serialize {mode:?}");
+            let parsed: SandboxMode = serde_json::from_str(expected_json).unwrap();
+            assert_eq!(&parsed, mode, "deserialize {expected_json}");
+        }
+    }
+
+    #[test]
+    fn test_sandbox_mode_debug() {
+        // Ensure Debug is implemented and produces expected output
+        let dbg = format!("{:?}", SandboxMode::Auto);
+        assert_eq!(dbg, "Auto");
+    }
+
+    // --- MountMode enum tests ---
+
+    #[test]
+    fn test_mount_mode_default_is_readwrite() {
+        assert_eq!(MountMode::default(), MountMode::ReadWrite);
+    }
+
+    #[test]
+    fn test_mount_mode_serde_roundtrip() {
+        let modes = [
+            (MountMode::None, "\"none\""),
+            (MountMode::ReadOnly, "\"ro\""),
+            (MountMode::ReadWrite, "\"rw\""),
+        ];
+        for (mode, expected_json) in &modes {
+            let json = serde_json::to_string(mode).unwrap();
+            assert_eq!(&json, expected_json, "serialize {mode:?}");
+            let parsed: MountMode = serde_json::from_str(expected_json).unwrap();
+            assert_eq!(&parsed, mode, "deserialize {expected_json}");
+        }
+    }
+
+    // --- BLOCKED_ENV_VARS tests ---
+
+    #[test]
+    fn test_blocked_env_vars_contains_critical_vars() {
+        let critical = [
+            "LD_PRELOAD",
+            "DYLD_INSERT_LIBRARIES",
+            "NODE_OPTIONS",
+            "PYTHONSTARTUP",
+            "PYTHONPATH",
+            "BASH_ENV",
+            "LD_LIBRARY_PATH",
+            "DYLD_LIBRARY_PATH",
+            "JAVA_TOOL_OPTIONS",
+        ];
+        for var in &critical {
+            assert!(
+                BLOCKED_ENV_VARS.contains(var),
+                "BLOCKED_ENV_VARS missing critical var: {var}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_blocked_env_vars_has_expected_count() {
+        // Guard against accidental removal; update count if vars are intentionally added/removed
+        assert_eq!(
+            BLOCKED_ENV_VARS.len(),
+            18,
+            "BLOCKED_ENV_VARS count changed unexpectedly"
+        );
+    }
+
+    #[test]
+    fn test_blocked_env_vars_no_duplicates() {
+        let mut seen = std::collections::HashSet::new();
+        for var in BLOCKED_ENV_VARS {
+            assert!(seen.insert(var), "duplicate in BLOCKED_ENV_VARS: {var}");
+        }
+    }
+
+    // --- SandboxConfig / DockerConfig default tests ---
+
+    #[test]
+    fn test_sandbox_config_default() {
+        let config = SandboxConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.mode, SandboxMode::Auto);
+        assert!(!config.allow_network);
+    }
+
+    #[test]
+    fn test_docker_config_default() {
+        let config = DockerConfig::default();
+        assert_eq!(config.image, "alpine:3.21");
+        assert!(config.cpu_limit.is_none());
+        assert!(config.memory_limit.is_none());
+        assert!(config.pids_limit.is_none());
+        assert_eq!(config.mount_mode, MountMode::ReadWrite);
+    }
+
+    #[test]
+    fn test_sandbox_config_serde_defaults() {
+        // Empty JSON object should produce sensible defaults
+        let config: SandboxConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.mode, SandboxMode::Auto);
+        assert!(!config.allow_network);
+        assert_eq!(config.docker.image, "alpine:3.21");
+    }
+
+    // --- create_sandbox with SandboxMode::None ---
+
+    #[test]
+    fn test_create_sandbox_mode_none() {
+        let config = SandboxConfig {
+            enabled: true,
+            mode: SandboxMode::None,
+            allow_network: false,
+            docker: DockerConfig::default(),
+        };
+        let sb = create_sandbox(&config);
+        // Should produce a NoSandbox (sh -c)
+        let cmd = sb.wrap_command("echo test", Path::new("/tmp"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "sh");
+    }
+
+    // --- Bwrap with network allowed ---
+
+    #[test]
+    fn test_bwrap_sandbox_allows_network() {
+        let sb = BwrapSandbox {
+            allow_network: true,
+        };
+        let cmd = sb.wrap_command("echo hi", Path::new("/tmp"));
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            !args.contains(&"--unshare-net".to_string()),
+            "should not unshare net when network is allowed"
+        );
+    }
+
+    // --- macOS sandbox with network denied ---
+
+    #[test]
+    fn test_macos_sandbox_denies_network() {
+        let sb = MacosSandbox {
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("echo hi", Path::new("/tmp/test"));
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(
+            args.iter().any(|a| a.contains("deny network")),
+            "should deny network when allow_network is false"
+        );
+    }
+
+    // --- Docker path validation: additional injection chars ---
+
+    #[test]
+    fn test_docker_sandbox_rejects_null_byte_in_path() {
+        let sb = DockerSandbox {
+            config: DockerConfig::default(),
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("ls", Path::new("/tmp/evil\0inject"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "sh");
+    }
+
+    #[test]
+    fn test_docker_sandbox_rejects_carriage_return_in_path() {
+        let sb = DockerSandbox {
+            config: DockerConfig::default(),
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("ls", Path::new("/tmp/evil\r--privileged"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "sh");
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert!(args.iter().any(|a| a.contains("exit 1")));
+    }
+
+    // --- macOS sandbox accepts valid paths ---
+
+    #[test]
+    fn test_macos_sandbox_accepts_valid_path() {
+        let sb = MacosSandbox {
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("echo ok", Path::new("/Users/test/project"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "sandbox-exec");
+    }
+
+    // --- Docker sandbox accepts valid paths ---
+
+    #[test]
+    fn test_docker_sandbox_accepts_valid_path() {
+        let sb = DockerSandbox {
+            config: DockerConfig::default(),
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("echo ok", Path::new("/home/user/project"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "docker");
+    }
+
+    // --- macOS sandbox rejects DEL character (0x7F) ---
+
+    #[test]
+    fn test_macos_sandbox_rejects_del_character() {
+        let sb = MacosSandbox {
+            allow_network: false,
+        };
+        let cmd = sb.wrap_command("ls", Path::new("/tmp/evil\x7Fpath"));
+        let prog = cmd.as_std().get_program().to_string_lossy().to_string();
+        assert_eq!(prog, "sh");
+    }
 }

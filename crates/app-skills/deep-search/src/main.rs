@@ -234,13 +234,9 @@ async fn run_deep_search(
         let follow_ups = generate_follow_up_queries(query, &r1.output, depth);
         let rounds_left = max_rounds - 1;
 
-        for (i, fq) in follow_ups
-            .into_iter()
-            .take(rounds_left as usize)
-            .enumerate()
-        {
+        for (i, fq) in follow_ups.into_iter().take(rounds_left).enumerate() {
             let round = i + 2;
-            progress(round, max_rounds as usize, &format!("Searching: \"{fq}\""));
+            progress(round, max_rounds, &format!("Searching: \"{fq}\""));
             search_queries.push(fq.clone());
 
             let r = web_search(client, &fq, max_results, engine).await;
@@ -447,7 +443,7 @@ async fn run_deep_search(
     for (i, q) in search_queries.iter().enumerate() {
         report.push_str(&format!("{}. {}\n", i + 1, q));
     }
-    report.push_str("\n");
+    report.push('\n');
 
     // Summary line
     report.push_str(&format!(
@@ -733,8 +729,6 @@ fn decode_ddg_url(raw: &str) -> String {
         let encoded = &raw[start + 5..];
         let end = encoded.find('&').unwrap_or(encoded.len());
         urldecoded(&encoded[..end])
-    } else if raw.starts_with("http") {
-        raw.to_string()
     } else {
         raw.to_string()
     }
@@ -1333,10 +1327,8 @@ fn slugify(s: &str) -> String {
         if ch.is_alphanumeric() || ch > '\x7f' {
             // Keep CJK and other unicode chars as-is for readability
             slug.push(ch);
-        } else if ch == ' ' || ch == '-' || ch == '_' {
-            if !slug.ends_with('-') {
-                slug.push('-');
-            }
+        } else if (ch == ' ' || ch == '-' || ch == '_') && !slug.ends_with('-') {
+            slug.push('-');
         }
     }
     slug.trim_matches('-').to_string()

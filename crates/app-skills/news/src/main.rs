@@ -1031,12 +1031,12 @@ mod tests {
         truncate_utf8(&mut s, 100);
         assert_eq!(s, "Hello, world!");
 
-        let mut s = "Hello, world!".to_string();
+        let mut s = "Hello, world! This is a longer string for testing.".to_string();
         truncate_utf8(&mut s, 20);
         assert_eq!(s, "Hello\n...(truncated)");
 
-        // Test with multibyte UTF-8
-        let mut s = "Hello 你好世界".to_string();
+        // Test with multibyte UTF-8 (must be longer than max_chars to trigger truncation)
+        let mut s = "Hello 你好世界这是一个很长的中文字符串".to_string();
         truncate_utf8(&mut s, 22);
         assert!(s.ends_with("(truncated)"));
         // Should not panic or corrupt UTF-8
