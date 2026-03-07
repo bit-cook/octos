@@ -772,13 +772,19 @@ pub fn diff_profiles(old: &UserProfile, new: &UserProfile) -> ProfileChange {
         restart_fields.push("parent_id".into());
     }
 
-    // Restart-required fields
-    if oc.provider != nc.provider {
-        restart_fields.push("provider".into());
+    // Provider/model changes are hot-reloadable (switch_model tool does live
+    // swap via SwappableProvider and persists to profile; restarting the
+    // gateway would kill the in-flight response).
+    if oc.provider != nc.provider || oc.model != nc.model {
+        tracing::debug!(
+            old_provider = ?oc.provider,
+            new_provider = ?nc.provider,
+            old_model = ?oc.model,
+            new_model = ?nc.model,
+            "provider/model change detected — treating as hot-reload (switch_model already applied)"
+        );
     }
-    if oc.model != nc.model {
-        restart_fields.push("model".into());
-    }
+    // base_url and api_key_env still require restart
     if oc.base_url != nc.base_url {
         restart_fields.push("base_url".into());
     }
@@ -1121,7 +1127,7 @@ mod tests {
     }
 
     #[test]
-    fn test_diff_profiles_restart_required() {
+    fn test_diff_profiles_model_change_is_hot() {
         let base = UserProfile {
             id: "diff-test".into(),
             name: "Diff".into(),
@@ -1140,12 +1146,11 @@ mod tests {
         let mut changed = base.clone();
         changed.config.model = Some("gpt-4o-mini".into());
 
-        match diff_profiles(&base, &changed) {
-            ProfileChange::RestartRequired(fields) => {
-                assert!(fields.contains(&"model".into()));
-            }
-            other => panic!("expected RestartRequired, got {:?}", other),
-        }
+        // Provider/model changes are hot-reloadable (switch_model does live swap)
+        assert!(matches!(
+            diff_profiles(&base, &changed),
+            ProfileChange::HotReloadable | ProfileChange::Unchanged
+        ));
     }
 
     #[test]

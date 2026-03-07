@@ -109,13 +109,9 @@ impl ConfigWatcher {
         let mut hot_history = None;
         let mut has_hot = false;
 
-        // Restart-required fields
-        if old.provider != new.provider {
-            restart_fields.push("provider".into());
-        }
-        if old.model != new.model {
-            restart_fields.push("model".into());
-        }
+        // Provider/model changes are hot-reloadable (switch_model tool does
+        // live swap via SwappableProvider; restarting would kill in-flight
+        // responses).
         if old.base_url != new.base_url {
             restart_fields.push("base_url".into());
         }
@@ -296,7 +292,8 @@ mod tests {
     }
 
     #[test]
-    fn test_restart_required_on_provider_change() {
+    fn test_provider_change_no_restart() {
+        // Provider/model changes are hot-reloadable (switch_model does live swap)
         let dir = TempDir::new().unwrap();
         let path = write_config(&dir, r#"{"provider": "anthropic"}"#);
         let old_config = Config::from_file(&path).unwrap();
@@ -309,11 +306,12 @@ mod tests {
         watcher.diff_and_emit(&new_config);
 
         let change = rx.borrow().clone();
-        assert!(change.is_some());
-        if let Some(ConfigChange::RestartRequired(fields)) = change {
-            assert!(fields.contains(&"provider".to_string()));
-        } else {
-            panic!("expected RestartRequired");
+        // Should NOT trigger RestartRequired for provider-only change
+        match change {
+            Some(ConfigChange::RestartRequired(fields)) => {
+                panic!("provider change should not require restart, got fields: {:?}", fields);
+            }
+            _ => {} // None or HotReload is fine
         }
     }
 }
