@@ -60,6 +60,8 @@ struct Input {
     channel: Option<String>,
     #[serde(default)]
     chat_id: Option<String>,
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
 }
 
 #[async_trait]
@@ -91,6 +93,10 @@ impl Tool for MessageTool {
                 "chat_id": {
                     "type": "string",
                     "description": "Target chat/user ID. Defaults to current."
+                },
+                "metadata": {
+                    "type": "object",
+                    "description": "Optional metadata. Use 'inline_keyboard' for Telegram button menus: {\"inline_keyboard\": [[{\"text\": \"Label\", \"callback_data\": \"value\"}]]}. Each inner array is a row of buttons."
                 }
             },
             "required": ["content"]
@@ -138,7 +144,7 @@ impl Tool for MessageTool {
             content: input.content,
             reply_to: None,
             media: vec![],
-            metadata: serde_json::json!({}),
+            metadata: input.metadata.unwrap_or_else(|| serde_json::json!({})),
         };
 
         self.out_tx

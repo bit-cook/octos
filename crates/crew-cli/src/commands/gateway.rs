@@ -1229,8 +1229,6 @@ impl GatewayCommand {
                 store.resolve_session_key(&base_key_str)
             };
 
-            let cmd = inbound.content.trim();
-
             // Handle callback queries (inline keyboard button presses)
             if inbound
                 .metadata
@@ -1242,7 +1240,8 @@ impl GatewayCommand {
                     .metadata
                     .get("callback_data")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                    .unwrap_or("")
+                    .to_string();
                 let callback_message_id = inbound
                     .metadata
                     .get("callback_message_id")
@@ -1279,9 +1278,16 @@ impl GatewayCommand {
 
                     let label = if topic.is_empty() { "(default)" } else { topic };
                     info!(session = %label, "session switched via inline keyboard");
+                    continue;
                 }
-                continue;
+
+                // Forward other callback data to the agent as a user message
+                // so skills can use inline keyboards for interactive menus
+                inbound.content = format!("[callback] {callback_data}");
+                // Fall through to normal message processing
             }
+
+            let cmd = inbound.content.trim();
 
             // Handle /new command — clear current session or create named session
             if cmd == "/new" || cmd.starts_with("/new ") {
