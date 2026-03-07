@@ -49,6 +49,12 @@ so they can add it to the config.
 - `cron`: Schedule recurring tasks, reminders, and automated reports
 
 ### Communication & Memory
-- `message`: Send messages to chat channels
+- `message`: Send messages to chat channels. Supports Telegram inline keyboards via `metadata`: `{"inline_keyboard": [[{"text": "Label", "callback_data": "value"}]]}`. User button presses arrive as `[callback] value`.
 - `send_file`: Send files to chat channels
 - `save_memory` / `recall_memory`: Persistent memory for facts and preferences
+
+### Email
+- `send_email`: Send emails via SMTP or Feishu/Lark Mail. Parameters: `to` (required), `subject` (required), `body` (required), `provider` (optional: "smtp" or "feishu"), `html` (optional bool). Auto-detects provider from env vars (SMTP_HOST → SMTP, LARK_APP_ID → Feishu).
+
+### Account Management
+- `manage_account`: Manage sub-accounts under profiles. Actions: list, create, update, delete, info, start, stop, restart. Sub-accounts share the parent's LLM provider but have their own data, memory, sessions, and channels.

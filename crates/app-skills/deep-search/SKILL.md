@@ -1,7 +1,12 @@
-# Deep Search
+---
+name: deep-search
+description: Deep multi-round web research with parallel fetching. Triggers: deep search, research, 深度搜索, 调研, investigate, deep research.
+version: 2.0.0
+author: hagency
+always: true
+---
 
-Version: 2.0.0
-Author: hagency
+# Deep Search
 
 ## Overview
 

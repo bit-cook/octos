@@ -1,5 +1,11 @@
 //! Gateway command: run as a persistent messaging daemon.
 
+mod account_handler;
+mod prompt;
+mod session_ui;
+mod skills_handler;
+mod transcription;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -23,7 +29,6 @@ use eyre::{Result, WrapErr};
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{info, warn};
 
-use std::path::Path;
 
 use super::Executable;
 use crate::commands::chat::{create_embedder, resolve_provider_policy};
@@ -32,6 +37,20 @@ use crate::config_watcher::{ConfigChange, ConfigWatcher};
 use crate::persona_service::PersonaService;
 use crate::session_actor::{ActorFactory, ActorRegistry, SnapshotToolRegistryFactory};
 use crate::status_indicator::StatusIndicator;
+
+// Re-export for use by prompt module
+pub(crate) use prompt::build_system_prompt;
+#[cfg(any(
+    feature = "telegram",
+    feature = "discord",
+    feature = "slack",
+    feature = "whatsapp",
+    feature = "email",
+    feature = "feishu",
+    feature = "twilio",
+    feature = "wecom"
+))]
+use prompt::settings_str;
 
 /// Run as a persistent gateway daemon.
 #[derive(Debug, Args)]
@@ -460,11 +479,22 @@ impl GatewayCommand {
             tools.register(crew_agent::RecallMemoryTool::new(memory_store.clone()));
             tools.register(crew_agent::SaveMemoryTool::new(memory_store.clone()));
 
-            // Load plugins (send_email, etc.)
-            let plugin_dirs = crate::config::Config::plugin_dirs(&cwd);
-            if !plugin_dirs.is_empty() {
-                if let Err(e) = crew_agent::PluginLoader::load_into(&mut tools, &plugin_dirs) {
-                    warn!("plugin loading failed: {e}");
+            // Load only admin-relevant plugins (not all bundled skills)
+            let admin_skills: &[&str] = &["send-email", "account-manager"];
+            let bundled_dir = cwd
+                .join(".crew")
+                .join(crew_agent::bootstrap::BUNDLED_APP_SKILLS_DIR);
+            for skill_name in admin_skills {
+                let skill_dir = bundled_dir.join(skill_name);
+                if skill_dir.exists() {
+                    match crew_agent::PluginLoader::load_plugin(&skill_dir) {
+                        Ok(plugin_tools) => {
+                            for t in plugin_tools {
+                                tools.register(t);
+                            }
+                        }
+                        Err(e) => warn!("admin plugin {skill_name} failed: {e}"),
+                    }
                 }
             }
 
@@ -637,15 +667,13 @@ impl GatewayCommand {
             ));
         }
 
-        // Note: send_email tool is now provided by the system-skills package
-
         // Build system prompt — admin mode uses a built-in admin prompt
         let system_prompt = if admin_mode {
             let custom = gw_config.system_prompt.as_deref();
             if let Some(custom_prompt) = custom {
                 custom_prompt.to_string()
             } else {
-                let compiled = include_str!("../prompts/admin_default.txt");
+                let compiled = include_str!("../../prompts/admin_default.txt");
                 super::load_prompt("admin", compiled)
             }
         } else {
@@ -1158,7 +1186,9 @@ impl GatewayCommand {
                         if let Some(ref lang) = asr_language {
                             input["language"] = serde_json::Value::String(lang.clone());
                         }
-                        match transcribe_via_skill(asr_bin, &input.to_string()).await {
+                        match transcription::transcribe_via_skill(asr_bin, &input.to_string())
+                            .await
+                        {
                             Ok(text) => {
                                 // Store transcript in metadata for status indicator display
                                 if let Some(obj) = inbound.metadata.as_object_mut() {
@@ -1261,8 +1291,8 @@ impl GatewayCommand {
                         .lock()
                         .await
                         .list_sessions_for_chat(&base_key_str);
-                    let keyboard = build_session_keyboard(&entries, topic);
-                    let text = build_session_text(&entries, topic);
+                    let keyboard = session_ui::build_session_keyboard(&entries, topic);
+                    let text = session_ui::build_session_text(&entries, topic);
 
                     // Edit the picker message in-place
                     if let Some(ref mid) = callback_message_id {
@@ -1440,8 +1470,8 @@ impl GatewayCommand {
                     };
                     let _ = agent_handle.send_outbound(msg).await;
                 } else {
-                    let keyboard = build_session_keyboard(&entries, &active_topic);
-                    let text = build_session_text(&entries, &active_topic);
+                    let keyboard = session_ui::build_session_keyboard(&entries, &active_topic);
+                    let text = session_ui::build_session_text(&entries, &active_topic);
                     let msg = OutboundMessage {
                         channel: reply_channel.clone(),
                         chat_id: reply_chat_id.clone(),
@@ -1571,7 +1601,7 @@ impl GatewayCommand {
                     .unwrap_or("")
                     .trim();
                 let response =
-                    handle_account_command(args, profile_id.as_deref(), &profile_store).await;
+                    account_handler::handle_account_command(args, profile_id.as_deref(), &profile_store).await;
                 let msg = OutboundMessage {
                     channel: reply_channel.clone(),
                     chat_id: reply_chat_id.clone(),
@@ -1594,7 +1624,7 @@ impl GatewayCommand {
                     .unwrap_or("")
                     .trim();
                 let response =
-                    handle_skills_command(args, profile_id.as_deref(), &data_dir, &profile_store)
+                    skills_handler::handle_skills_command(args, profile_id.as_deref(), &data_dir, &profile_store)
                         .await;
                 let msg = OutboundMessage {
                     channel: reply_channel.clone(),
@@ -1650,182 +1680,6 @@ impl GatewayCommand {
     }
 }
 
-/// Escape HTML special characters for Telegram's HTML parse mode.
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-/// Truncate a string to `max` chars, appending "…" if truncated.
-fn truncate_button_text(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        text.to_string()
-    } else {
-        let truncated: String = text.chars().take(max - 1).collect();
-        format!("{truncated}…")
-    }
-}
-
-/// Build an inline keyboard JSON value for session selection.
-/// 2 buttons per row, active session marked with `>> name <<`.
-/// Caps at 50 sessions to stay within Telegram limits.
-fn build_session_keyboard(
-    entries: &[crew_bus::SessionListEntry],
-    active_topic: &str,
-) -> serde_json::Value {
-    let cap = entries.len().min(50);
-    let mut rows: Vec<serde_json::Value> = Vec::new();
-    let mut row: Vec<serde_json::Value> = Vec::new();
-
-    for entry in entries.iter().take(cap) {
-        let topic = entry.topic.as_deref().unwrap_or("");
-        let display_name = if topic.is_empty() { "default" } else { topic };
-        let label = if topic == active_topic {
-            format!(">> {} <<", truncate_button_text(display_name, 14))
-        } else {
-            truncate_button_text(display_name, 18)
-        };
-        let callback_data = format!("s:{topic}");
-
-        row.push(serde_json::json!({
-            "text": label,
-            "callback_data": callback_data,
-        }));
-
-        if row.len() == 2 {
-            rows.push(serde_json::Value::Array(row));
-            row = Vec::new();
-        }
-    }
-    // Push remaining button if odd count
-    if !row.is_empty() {
-        rows.push(serde_json::Value::Array(row));
-    }
-
-    serde_json::json!({ "inline_keyboard": rows })
-}
-
-/// Build an HTML-formatted text listing sessions.
-fn build_session_text(entries: &[crew_bus::SessionListEntry], active_topic: &str) -> String {
-    if entries.is_empty() {
-        return "No sessions yet. Send a message to start one.".to_string();
-    }
-
-    let mut lines = Vec::new();
-    lines.push("<b>Sessions</b>".to_string());
-    lines.push(String::new());
-
-    for entry in entries {
-        let topic = entry.topic.as_deref().unwrap_or("");
-        let display_name = if topic.is_empty() { "default" } else { topic };
-        let marker = if topic == active_topic { " ✦" } else { "" };
-        let summary = entry.summary.as_deref().unwrap_or("(no summary)");
-        let count = entry.message_count;
-        // HTML-escape user content to prevent parse errors
-        let safe_name = html_escape(display_name);
-        let safe_summary = html_escape(summary);
-        lines.push(format!(
-            "• <b>{safe_name}</b>{marker} — {count} msgs\n  <i>{safe_summary}</i>",
-        ));
-    }
-
-    lines.join("\n")
-}
-
-/// Build the system prompt with bootstrap files, memory context, and skills.
-async fn build_system_prompt(
-    base: Option<&str>,
-    data_dir: &Path,
-    project_dir: &Path,
-    memory_store: &MemoryStore,
-    skills_loader: &SkillsLoader,
-    tool_config: &crew_agent::ToolConfigStore,
-) -> String {
-    let compiled = include_str!("../prompts/gateway_default.txt");
-    let runtime = super::load_prompt("gateway", compiled);
-    let mut prompt = base.unwrap_or(&runtime).to_string();
-
-    // Inject current date so the model knows "今年" = which year
-    let today = chrono::Local::now().format("%Y-%m-%d");
-    prompt.push_str(&format!("\n\nCurrent date: {today}"));
-
-    // Inject dynamically generated persona (from persona.md) if available
-    if let Some(persona) = PersonaService::read_persona(data_dir) {
-        prompt.push_str("\n\n## Communication Style\n\n");
-        prompt.push_str(&persona);
-    }
-
-    // Append bootstrap files (AGENTS.md, SOUL.md, USER.md, etc.)
-    let bootstrap = super::load_bootstrap_files(project_dir);
-    if !bootstrap.is_empty() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&bootstrap);
-    }
-
-    // Append memory context
-    let memory_ctx = memory_store.get_memory_context().await;
-    if !memory_ctx.is_empty() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&memory_ctx);
-    }
-
-    // Append memory bank summary (entity abstracts)
-    let bank_summary = memory_store.get_bank_summary().await;
-    if !bank_summary.is_empty() {
-        prompt.push_str("\n\n");
-        prompt.push_str(&bank_summary);
-    }
-
-    // Append always-on skills
-    if let Ok(always_names) = skills_loader.get_always_skills().await {
-        if !always_names.is_empty() {
-            if let Ok(skills_content) = skills_loader.load_skills_for_context(&always_names).await {
-                if !skills_content.is_empty() {
-                    prompt.push_str("\n\n## Active Skills\n\n");
-                    prompt.push_str(&skills_content);
-                }
-            }
-        }
-    }
-
-    // Append skills summary
-    if let Ok(summary) = skills_loader.build_skills_summary().await {
-        if !summary.is_empty() {
-            prompt.push_str("\n\n## Available Skills\n\n");
-            prompt.push_str(&summary);
-        }
-    }
-
-    // Append tool preferences summary
-    let config_summary = tool_config.summary().await;
-    if !config_summary.is_empty() {
-        prompt.push_str("\n\n## Tool Preferences\n\n");
-        prompt.push_str(&config_summary);
-    }
-
-    prompt
-}
-
-/// Extract a string value from channel settings JSON, with a default fallback.
-#[cfg(any(
-    feature = "telegram",
-    feature = "discord",
-    feature = "slack",
-    feature = "whatsapp",
-    feature = "email",
-    feature = "feishu",
-    feature = "twilio",
-    feature = "wecom"
-))]
-fn settings_str(settings: &serde_json::Value, key: &str, default: &str) -> String {
-    settings
-        .get(key)
-        .and_then(|v| v.as_str())
-        .unwrap_or(default)
-        .to_string()
-}
-
 /// Merge queued inbound messages by session key.
 /// Messages from the same session are concatenated with `\n\n`.
 /// Used by Collect queue mode (reserved for future concurrent collect support).
@@ -1858,476 +1712,4 @@ fn merge_queued_by_session(
             Some(base)
         })
         .collect()
-}
-
-// ── /account command handler ─────────────────────────────────────────
-
-async fn handle_account_command(
-    args: &str,
-    parent_profile_id: Option<&str>,
-    profile_store: &Option<Arc<crate::profiles::ProfileStore>>,
-) -> String {
-    let parent_id = match parent_profile_id {
-        Some(id) => id,
-        None => return "Account management requires a profile-based gateway.".to_string(),
-    };
-
-    let store = match profile_store {
-        Some(s) => s,
-        None => {
-            return "Account management is not available (no crew-home configured).".to_string();
-        }
-    };
-
-    let parts: Vec<&str> = args.splitn(2, ' ').collect();
-    match parts.first().copied().unwrap_or("list") {
-        "" | "list" => match store.list_sub_accounts(parent_id) {
-            Ok(subs) if subs.is_empty() => {
-                "No sub-accounts.\nCreate one with: /account create <name>".to_string()
-            }
-            Ok(subs) => {
-                let mut lines = vec!["Sub-accounts:".to_string()];
-                for s in &subs {
-                    let status = if s.enabled { "enabled" } else { "disabled" };
-                    let ch_types: Vec<&str> = s
-                        .config
-                        .channels
-                        .iter()
-                        .map(|c| match c {
-                            crate::profiles::ChannelCredentials::Telegram { .. } => "telegram",
-                            crate::profiles::ChannelCredentials::Discord { .. } => "discord",
-                            crate::profiles::ChannelCredentials::Slack { .. } => "slack",
-                            crate::profiles::ChannelCredentials::WhatsApp { .. } => "whatsapp",
-                            crate::profiles::ChannelCredentials::Feishu { .. } => "feishu",
-                            crate::profiles::ChannelCredentials::Email { .. } => "email",
-                            crate::profiles::ChannelCredentials::Twilio { .. } => "twilio",
-                        })
-                        .collect();
-                    lines.push(format!(
-                        "  {} — {} ({}) [{}]",
-                        s.id,
-                        s.name,
-                        status,
-                        ch_types.join(", ")
-                    ));
-                }
-                lines.join("\n")
-            }
-            Err(e) => format!("Error: {e}"),
-        },
-
-        "create" => {
-            let name = parts.get(1).copied().unwrap_or("").trim();
-            if name.is_empty() {
-                return "Usage: /account create <name>".to_string();
-            }
-            match store.create_sub_account(
-                parent_id,
-                name,
-                vec![],
-                crate::profiles::GatewaySettings::default(),
-            ) {
-                Ok(sub) => format!(
-                    "Created sub-account: {}\nAdd channels via dashboard or CLI:\n  crew account create --profile {} {} --telegram-token <token>",
-                    sub.id, parent_id, name
-                ),
-                Err(e) => format!("Error: {e}"),
-            }
-        }
-
-        "delete" => {
-            let sub_id = parts.get(1).copied().unwrap_or("").trim();
-            if sub_id.is_empty() {
-                return "Usage: /account delete <sub-id>".to_string();
-            }
-            // Safety: verify it's a sub-account of this parent
-            match store.get(sub_id) {
-                Ok(Some(sub)) if sub.parent_id.as_deref() == Some(parent_id) => {
-                    match store.delete(sub_id) {
-                        Ok(true) => format!("Deleted sub-account: {sub_id}"),
-                        Ok(false) => format!("Sub-account '{sub_id}' not found"),
-                        Err(e) => format!("Error: {e}"),
-                    }
-                }
-                Ok(Some(_)) => format!("'{sub_id}' is not a sub-account of this profile."),
-                Ok(None) => format!("Sub-account '{sub_id}' not found."),
-                Err(e) => format!("Error: {e}"),
-            }
-        }
-
-        // /account update <sub-id> key=value key=value ...
-        // Keys: telegram-token, telegram-senders, whatsapp (true/false),
-        //       feishu-app-id, feishu-app-secret, system-prompt, enabled (true/false)
-        "update" => {
-            let rest = parts.get(1).copied().unwrap_or("").trim();
-            let mut tokens = rest.splitn(2, ' ');
-            let sub_id = tokens.next().unwrap_or("").trim();
-            let kv_str = tokens.next().unwrap_or("").trim();
-            if sub_id.is_empty() || kv_str.is_empty() {
-                return "Usage: /account update <sub-id> key=value [key=value ...]\n\
-                    Keys: telegram-token, telegram-senders, whatsapp, \
-                    feishu-app-id, feishu-app-secret, system-prompt, enabled\n\
-                    Example: /account update my--bot telegram-token=123:ABC enabled=true"
-                    .to_string();
-            }
-            // Verify it's a sub-account of this parent
-            let mut profile = match store.get(sub_id) {
-                Ok(Some(p)) if p.parent_id.as_deref() == Some(parent_id) => p,
-                Ok(Some(_)) => return format!("'{sub_id}' is not a sub-account of this profile."),
-                Ok(None) => return format!("Sub-account '{sub_id}' not found."),
-                Err(e) => return format!("Error: {e}"),
-            };
-
-            let mut changed = Vec::new();
-
-            // Parse key=value pairs (simple split on '=')
-            for pair in kv_str.split_whitespace() {
-                let mut kv = pair.splitn(2, '=');
-                let key = kv.next().unwrap_or("");
-                let val = kv.next().unwrap_or("");
-                match key {
-                    "telegram-token" => {
-                        let env_name = format!(
-                            "TELEGRAM_BOT_TOKEN_{}",
-                            profile.name.to_uppercase().replace([' ', '-'], "_")
-                        );
-                        profile.config.channels.retain(|ch| {
-                            !matches!(ch, crate::profiles::ChannelCredentials::Telegram { .. })
-                        });
-                        profile.config.channels.push(
-                            crate::profiles::ChannelCredentials::Telegram {
-                                token_env: env_name.clone(),
-                                allowed_senders: String::new(),
-                            },
-                        );
-                        profile.config.env_vars.insert(env_name, val.to_string());
-                        changed.push("telegram channel");
-                    }
-                    "telegram-senders" => {
-                        let mut found = false;
-                        for ch in &mut profile.config.channels {
-                            if let crate::profiles::ChannelCredentials::Telegram {
-                                allowed_senders,
-                                ..
-                            } = ch
-                            {
-                                *allowed_senders = val.to_string();
-                                found = true;
-                            }
-                        }
-                        if found {
-                            changed.push("telegram senders");
-                        } else {
-                            return "No Telegram channel to update senders on. Set telegram-token first.".to_string();
-                        }
-                    }
-                    "whatsapp" => {
-                        profile.config.channels.retain(|ch| {
-                            !matches!(ch, crate::profiles::ChannelCredentials::WhatsApp { .. })
-                        });
-                        if val == "true" || val == "1" {
-                            profile.config.channels.push(
-                                crate::profiles::ChannelCredentials::WhatsApp {
-                                    bridge_url: String::new(),
-                                },
-                            );
-                            changed.push("whatsapp enabled");
-                        } else {
-                            changed.push("whatsapp disabled");
-                        }
-                    }
-                    "feishu-app-id" | "feishu-app-secret" => {
-                        // Collect both if provided; create/replace Feishu channel
-                        let id_env = format!(
-                            "LARK_APP_ID_{}",
-                            profile.name.to_uppercase().replace([' ', '-'], "_")
-                        );
-                        let secret_env = format!(
-                            "LARK_APP_SECRET_{}",
-                            profile.name.to_uppercase().replace([' ', '-'], "_")
-                        );
-                        if key == "feishu-app-id" {
-                            profile
-                                .config
-                                .env_vars
-                                .insert(id_env.clone(), val.to_string());
-                        } else {
-                            profile
-                                .config
-                                .env_vars
-                                .insert(secret_env.clone(), val.to_string());
-                        }
-                        // Ensure Feishu channel exists
-                        if !profile.config.channels.iter().any(|ch| {
-                            matches!(ch, crate::profiles::ChannelCredentials::Feishu { .. })
-                        }) {
-                            profile.config.channels.push(
-                                crate::profiles::ChannelCredentials::Feishu {
-                                    app_id_env: id_env,
-                                    app_secret_env: secret_env,
-                                    mode: "webhook".to_string(),
-                                    region: String::new(),
-                                    webhook_port: None,
-                                    verification_token_env: String::new(),
-                                    encrypt_key_env: String::new(),
-                                },
-                            );
-                        }
-                        changed.push("feishu channel");
-                    }
-                    "system-prompt" => {
-                        profile.config.gateway.system_prompt = if val.is_empty() {
-                            None
-                        } else {
-                            Some(val.to_string())
-                        };
-                        changed.push("system prompt");
-                    }
-                    "enabled" => {
-                        let en = val == "true" || val == "1";
-                        profile.enabled = en;
-                        changed.push(if en { "enabled" } else { "disabled" });
-                    }
-                    _ => {
-                        return format!(
-                            "Unknown key: {key}\nValid keys: telegram-token, telegram-senders, whatsapp, feishu-app-id, feishu-app-secret, system-prompt, enabled"
-                        );
-                    }
-                }
-            }
-
-            if changed.is_empty() {
-                return "Nothing to update.".to_string();
-            }
-
-            profile.updated_at = chrono::Utc::now();
-            match store.save(&profile) {
-                Ok(()) => {
-                    let mut msg = format!("Updated sub-account: {sub_id}");
-                    for c in &changed {
-                        msg.push_str(&format!("\n  - {c}"));
-                    }
-                    msg.push_str("\nGateway will auto-restart to pick up changes.");
-                    msg
-                }
-                Err(e) => format!("Error saving: {e}"),
-            }
-        }
-
-        // /account start <sub-id> — enable and trigger gateway start
-        "start" | "enable" => {
-            let sub_id = parts.get(1).copied().unwrap_or("").trim();
-            if sub_id.is_empty() {
-                return "Usage: /account start <sub-id>".to_string();
-            }
-            let mut profile = match store.get(sub_id) {
-                Ok(Some(p)) if p.parent_id.as_deref() == Some(parent_id) => p,
-                Ok(Some(_)) => return format!("'{sub_id}' is not a sub-account of this profile."),
-                Ok(None) => return format!("Sub-account '{sub_id}' not found."),
-                Err(e) => return format!("Error: {e}"),
-            };
-            profile.enabled = true;
-            profile.updated_at = chrono::Utc::now();
-            match store.save(&profile) {
-                Ok(()) => {
-                    format!("Enabled sub-account: {sub_id}\nGateway will start within ~5 seconds.")
-                }
-                Err(e) => format!("Error saving: {e}"),
-            }
-        }
-
-        // /account stop <sub-id> — disable and trigger gateway stop
-        "stop" | "disable" => {
-            let sub_id = parts.get(1).copied().unwrap_or("").trim();
-            if sub_id.is_empty() {
-                return "Usage: /account stop <sub-id>".to_string();
-            }
-            let mut profile = match store.get(sub_id) {
-                Ok(Some(p)) if p.parent_id.as_deref() == Some(parent_id) => p,
-                Ok(Some(_)) => return format!("'{sub_id}' is not a sub-account of this profile."),
-                Ok(None) => return format!("Sub-account '{sub_id}' not found."),
-                Err(e) => return format!("Error: {e}"),
-            };
-            profile.enabled = false;
-            profile.updated_at = chrono::Utc::now();
-            match store.save(&profile) {
-                Ok(()) => {
-                    format!("Disabled sub-account: {sub_id}\nGateway will stop within ~5 seconds.")
-                }
-                Err(e) => format!("Error saving: {e}"),
-            }
-        }
-
-        // /account restart <sub-id> — touch profile to trigger gateway restart
-        "restart" => {
-            let sub_id = parts.get(1).copied().unwrap_or("").trim();
-            if sub_id.is_empty() {
-                return "Usage: /account restart <sub-id>".to_string();
-            }
-            let mut profile = match store.get(sub_id) {
-                Ok(Some(p)) if p.parent_id.as_deref() == Some(parent_id) => p,
-                Ok(Some(_)) => return format!("'{sub_id}' is not a sub-account of this profile."),
-                Ok(None) => return format!("Sub-account '{sub_id}' not found."),
-                Err(e) => return format!("Error: {e}"),
-            };
-            if !profile.enabled {
-                return format!(
-                    "Sub-account '{sub_id}' is disabled. Use /account start {sub_id} first."
-                );
-            }
-            profile.updated_at = chrono::Utc::now();
-            match store.save(&profile) {
-                Ok(()) => format!(
-                    "Restarting sub-account: {sub_id}\nGateway will restart within ~5 seconds."
-                ),
-                Err(e) => format!("Error saving: {e}"),
-            }
-        }
-
-        other => format!(
-            "Unknown sub-command: {other}\nUsage: /account [list|create|update|delete|start|stop|restart]\n  /account list — list sub-accounts\n  /account create <name> — create sub-account\n  /account update <sub-id> key=value ... — update config\n  /account start <sub-id> — enable & start gateway\n  /account stop <sub-id> — disable & stop gateway\n  /account restart <sub-id> — restart gateway\n  /account delete <sub-id> — delete sub-account"
-        ),
-    }
-}
-
-// ── /skills command handler ──────────────────────────────────────────
-
-async fn handle_skills_command(
-    args: &str,
-    profile_id: Option<&str>,
-    data_dir: &std::path::Path,
-    profile_store: &Option<Arc<crate::profiles::ProfileStore>>,
-) -> String {
-    // Resolve skills directory: profile-based or data_dir fallback
-    let skills_dir = if let (Some(pid), Some(store)) = (profile_id, profile_store) {
-        match crate::commands::skills::resolve_profile_skills_dir(store, pid) {
-            Ok(d) => d,
-            Err(e) => return format!("Error resolving skills dir: {e}"),
-        }
-    } else {
-        data_dir.join("skills")
-    };
-
-    let parts: Vec<&str> = args.splitn(3, ' ').collect();
-    match parts.first().copied().unwrap_or("list") {
-        "" | "list" => match crate::commands::skills::list_skills(&skills_dir) {
-            Ok(entries) if entries.is_empty() => {
-                "No skills installed.\nInstall with: /skills install <user/repo>".to_string()
-            }
-            Ok(entries) => {
-                let mut lines = vec![format!("{} skill(s) installed:", entries.len())];
-                for e in &entries {
-                    let ver = e
-                        .version
-                        .as_deref()
-                        .map(|v| format!(" v{v}"))
-                        .unwrap_or_default();
-                    let src = e
-                        .source_repo
-                        .as_deref()
-                        .map(|s| format!(" (from {s})"))
-                        .unwrap_or_default();
-                    let tools = if e.tool_count > 0 {
-                        format!(" [{} tool(s)]", e.tool_count)
-                    } else {
-                        String::new()
-                    };
-                    lines.push(format!("  {}{}{}{}", e.name, ver, tools, src));
-                }
-                lines.join("\n")
-            }
-            Err(e) => format!("Error: {e}"),
-        },
-
-        "install" => {
-            let repo = parts.get(1).copied().unwrap_or("").trim();
-            if repo.is_empty() {
-                return "Usage: /skills install <user/repo>".to_string();
-            }
-            let skills_dir_c = skills_dir.clone();
-            let repo_c = repo.to_string();
-            match tokio::task::spawn_blocking(move || {
-                crate::commands::skills::install_skill(&skills_dir_c, &repo_c, false, "main")
-            })
-            .await
-            {
-                Ok(Ok(result)) => {
-                    let mut parts = Vec::new();
-                    if !result.installed.is_empty() {
-                        parts.push(format!("Installed: {}", result.installed.join(", ")));
-                    }
-                    if !result.deps_installed.is_empty() {
-                        parts.push(format!(
-                            "Dependencies: {}",
-                            result.deps_installed.join(", ")
-                        ));
-                    }
-                    if !result.skipped.is_empty() {
-                        parts.push(format!(
-                            "Skipped (already exists): {}",
-                            result.skipped.join(", ")
-                        ));
-                    }
-                    if parts.is_empty() {
-                        "No skills found in repository.".to_string()
-                    } else {
-                        parts.join("\n")
-                    }
-                }
-                Ok(Err(e)) => format!("Install failed: {e}"),
-                Err(e) => format!("Install task failed: {e}"),
-            }
-        }
-
-        "remove" => {
-            let name = parts.get(1).copied().unwrap_or("").trim();
-            if name.is_empty() {
-                return "Usage: /skills remove <name>".to_string();
-            }
-            match crate::commands::skills::remove_skill(&skills_dir, name) {
-                Ok(()) => format!("Removed skill: {name}"),
-                Err(e) => format!("Error: {e}"),
-            }
-        }
-
-        other => format!(
-            "Unknown /skills subcommand: {other}\nUsage:\n  /skills — list installed skills\n  /skills install <user/repo> — install from GitHub\n  /skills remove <name> — remove a skill"
-        ),
-    }
-}
-
-/// Transcribe audio by spawning the asr platform skill binary.
-async fn transcribe_via_skill(
-    asr_binary: &std::path::Path,
-    input_json: &str,
-) -> eyre::Result<String> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut child = tokio::process::Command::new(asr_binary)
-        .arg("voice_transcribe")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .wrap_err("failed to spawn asr skill binary")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input_json.as_bytes()).await?;
-        drop(stdin);
-    }
-
-    let output = tokio::time::timeout(Duration::from_secs(120), child.wait_with_output())
-        .await
-        .map_err(|_| eyre::eyre!("asr transcription timed out"))??;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let result: serde_json::Value =
-        serde_json::from_str(&stdout).wrap_err("invalid asr skill output")?;
-
-    if result.get("success").and_then(|v| v.as_bool()) == Some(true) {
-        Ok(result["output"].as_str().unwrap_or("").to_string())
-    } else {
-        let msg = result["output"].as_str().unwrap_or("unknown error");
-        eyre::bail!("asr skill failed: {msg}")
-    }
 }

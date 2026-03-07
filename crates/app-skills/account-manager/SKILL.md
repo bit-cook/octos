@@ -1,7 +1,12 @@
-# Account Manager Skill
-
+---
+name: account-manager
+description: Manage sub-accounts under the current profile. Triggers: create account, 创建账号, sub account, manage account, list accounts, 子账号.
 version: 1.1.0
 author: hagency
+always: true
+---
+
+# Account Manager Skill
 
 ## Overview
 

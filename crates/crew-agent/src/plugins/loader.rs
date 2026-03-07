@@ -65,7 +65,8 @@ impl PluginLoader {
         Ok(count)
     }
 
-    fn load_plugin(plugin_dir: &Path) -> Result<Vec<PluginTool>> {
+    /// Load a single plugin directory and return its tools.
+    pub fn load_plugin(plugin_dir: &Path) -> Result<Vec<PluginTool>> {
         let manifest_path = plugin_dir.join("manifest.json");
         let content = std::fs::read_to_string(&manifest_path)
             .map_err(|e| eyre::eyre!("no manifest.json: {e}"))?;
