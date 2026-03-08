@@ -180,6 +180,8 @@ impl TelegramChannel {
             BotCommand::new("sessions", "List and switch sessions"),
             BotCommand::new("back", "Switch to previous session"),
             BotCommand::new("delete", "Delete a named session"),
+            BotCommand::new("adaptive", "View/change adaptive routing (off|hedge|lane|qos)"),
+            BotCommand::new("queue", "View/change queue mode (followup|collect|steer|interrupt|spec)"),
         ];
         match self.bot.set_my_commands(commands).await {
             Ok(_) => info!("Telegram bot commands registered"),
