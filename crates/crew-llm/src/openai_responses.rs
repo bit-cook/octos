@@ -391,7 +391,11 @@ fn parse_responses_api(resp: ResponsesApiResponse) -> ChatResponse {
                 });
             }
             OutputItem::Reasoning { content: parts } => {
-                let text: String = parts.into_iter().map(|p| p.text).collect::<Vec<_>>().join("");
+                let text: String = parts
+                    .into_iter()
+                    .map(|p| p.text)
+                    .collect::<Vec<_>>()
+                    .join("");
                 if !text.is_empty() {
                     reasoning_content = Some(text);
                 }
@@ -555,9 +559,13 @@ fn map_responses_sse(
 /// Known model prefixes that support the OpenAI Responses API.
 /// Exact prefixes avoid false positives on future models (e.g. `gpt-4o-realtime`).
 const RESPONSES_PREFIXES: &[&str] = &[
-    "o1", "o3", "o4",
-    "gpt-4.1", "gpt-5",
-    "gpt-4o-mini", "gpt-4o-2",  // dated snapshots
+    "o1",
+    "o3",
+    "o4",
+    "gpt-4.1",
+    "gpt-5",
+    "gpt-4o-mini",
+    "gpt-4o-2", // dated snapshots
     "codex",
 ];
 
@@ -567,8 +575,7 @@ const RESPONSES_EXACT: &[&str] = &["gpt-4o"];
 /// Returns true if a model name is known to benefit from the Responses API.
 pub fn is_responses_capable(model: &str) -> bool {
     let m = model.to_lowercase();
-    RESPONSES_EXACT.iter().any(|&e| m == e)
-        || RESPONSES_PREFIXES.iter().any(|&p| m.starts_with(p))
+    RESPONSES_EXACT.iter().any(|&e| m == e) || RESPONSES_PREFIXES.iter().any(|&p| m.starts_with(p))
 }
 
 #[cfg(test)]
@@ -772,10 +779,7 @@ mod tests {
         };
         let result = parse_responses_api(resp);
         assert_eq!(result.content.as_deref(), Some("The answer is 42."));
-        assert_eq!(
-            result.reasoning_content.as_deref(),
-            Some("Let me think...")
-        );
+        assert_eq!(result.reasoning_content.as_deref(), Some("Let me think..."));
         assert_eq!(result.usage.reasoning_tokens, 15);
     }
 
@@ -814,7 +818,9 @@ mod tests {
         let events = map_responses_sse(&mut state, &event);
         assert_eq!(events.len(), 1);
         match &events[0] {
-            StreamEvent::ToolCallDelta { index, id, name, .. } => {
+            StreamEvent::ToolCallDelta {
+                index, id, name, ..
+            } => {
                 assert_eq!(*index, 0);
                 assert_eq!(id.as_deref(), Some("c1"));
                 assert_eq!(name.as_deref(), Some("shell"));
@@ -825,11 +831,15 @@ mod tests {
         // Delta
         let event = crate::sse::SseEvent {
             event: None,
-            data: r#"{"type": "response.function_call_arguments.delta", "delta": "{\"cmd\":\"ls\"}"}"#.into(),
+            data:
+                r#"{"type": "response.function_call_arguments.delta", "delta": "{\"cmd\":\"ls\"}"}"#
+                    .into(),
         };
         let events = map_responses_sse(&mut state, &event);
         assert_eq!(events.len(), 1);
-        assert!(matches!(&events[0], StreamEvent::ToolCallDelta { arguments_delta, .. } if arguments_delta.contains("cmd")));
+        assert!(
+            matches!(&events[0], StreamEvent::ToolCallDelta { arguments_delta, .. } if arguments_delta.contains("cmd"))
+        );
     }
 
     #[test]

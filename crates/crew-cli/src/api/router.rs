@@ -54,6 +54,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/sessions/{id}/messages",
             get(handlers::session_messages),
         )
+        .route("/api/sessions/{id}", delete(handlers::delete_session))
         .route("/api/status", get(handlers::status));
 
     // User self-service endpoints (user or admin auth)
@@ -164,10 +165,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/admin/profiles/{id}/sessions/read",
             get(admin::read_session),
         )
-        .route(
-            "/api/admin/profiles/{id}/cron",
-            get(admin::list_cron_jobs),
-        )
+        .route("/api/admin/profiles/{id}/cron", get(admin::list_cron_jobs))
         .route(
             "/api/admin/profiles/{id}/config-check",
             get(admin::config_check),

@@ -123,10 +123,7 @@ pub struct EmailSettings {
 impl EmailSettings {
     /// Return env var pairs that the `send_email` plugin expects.
     /// `env_vars` is the profile's env_vars map used to resolve `password_env`.
-    pub fn to_env_vars(
-        &self,
-        env_vars: &HashMap<String, String>,
-    ) -> Vec<(String, String)> {
+    pub fn to_env_vars(&self, env_vars: &HashMap<String, String>) -> Vec<(String, String)> {
         let mut out = Vec::new();
         if let Some(ref h) = self.smtp_host {
             out.push(("SMTP_HOST".into(), h.clone()));

@@ -180,8 +180,14 @@ impl TelegramChannel {
             BotCommand::new("sessions", "List and switch sessions"),
             BotCommand::new("back", "Switch to previous session"),
             BotCommand::new("delete", "Delete a named session"),
-            BotCommand::new("adaptive", "View/change adaptive routing (off|hedge|lane|qos)"),
-            BotCommand::new("queue", "View/change queue mode (followup|collect|steer|interrupt|spec)"),
+            BotCommand::new(
+                "adaptive",
+                "View/change adaptive routing (off|hedge|lane|qos)",
+            ),
+            BotCommand::new(
+                "queue",
+                "View/change queue mode (followup|collect|steer|interrupt|spec)",
+            ),
         ];
         match self.bot.set_my_commands(commands).await {
             Ok(_) => info!("Telegram bot commands registered"),
@@ -279,9 +285,9 @@ impl Channel for TelegramChannel {
 
                         // Mention-gating: in groups, only respond to @mentions, replies, or commands
                         let is_group = msg.chat.is_group() || msg.chat.is_supergroup();
-                        let is_reply_to_bot = msg.reply_to_message().is_some_and(|r| {
-                            r.from.as_ref().is_some_and(|u| u.is_bot)
-                        });
+                        let is_reply_to_bot = msg
+                            .reply_to_message()
+                            .is_some_and(|r| r.from.as_ref().is_some_and(|u| u.is_bot));
                         if !self.should_respond_in_group(&text, is_group, is_reply_to_bot) {
                             continue;
                         }
@@ -870,5 +876,4 @@ mod tests {
         assert_eq!(ch.strip_mention("hello @MyBot"), "hello");
         assert_eq!(ch.strip_mention("no mention here"), "no mention here");
     }
-
 }

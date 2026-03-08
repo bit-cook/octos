@@ -14,10 +14,10 @@ mod task;
 mod types;
 mod utils;
 
+pub use abort::is_abort_trigger;
 pub use error::{Error, ErrorKind, Result};
 pub use gateway::{InboundMessage, OutboundMessage};
 pub use message::AgentMessage;
 pub use task::{Task, TaskContext, TaskKind, TaskResult, TaskStatus, TokenUsage};
 pub use types::{AgentId, EpisodeRef, Message, MessageRole, SessionKey, TaskId, ToolCall};
-pub use abort::is_abort_trigger;
 pub use utils::{tool_output_limit, truncate_head_tail, truncate_utf8, truncated_utf8};

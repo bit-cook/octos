@@ -494,7 +494,11 @@ impl AdaptiveRouter {
                     let prev = self.last_selected.swap(i as u32, Ordering::Relaxed);
                     if prev != i as u32 {
                         info!(
-                            from = self.slots.get(prev as usize).map(|s| s.provider.provider_name()).unwrap_or("?"),
+                            from = self
+                                .slots
+                                .get(prev as usize)
+                                .map(|s| s.provider.provider_name())
+                                .unwrap_or("?"),
                             to = slot.provider.provider_name(),
                             "provider failover (circuit breaker, lane changing disabled)"
                         );
@@ -1243,7 +1247,11 @@ mod tests {
         // Should get the fast provider's response (race winner)
         assert_eq!(resp.content.as_deref(), Some("from-fast-fallback"));
         // Should complete in ~10ms, not ~200ms
-        assert!(elapsed.as_millis() < 150, "took {}ms, expected <150ms", elapsed.as_millis());
+        assert!(
+            elapsed.as_millis() < 150,
+            "took {}ms, expected <150ms",
+            elapsed.as_millis()
+        );
     }
 
     #[tokio::test]
@@ -1313,5 +1321,216 @@ mod tests {
     #[should_panic(expected = "at least one provider")]
     fn test_empty_router_panics() {
         let _ = AdaptiveRouter::new(vec![], AdaptiveConfig::default());
+    }
+
+    /// Lane mode selects best provider by score after warm-up.
+    /// Warm up in Off mode (priority order), then switch to Lane.
+    /// With metrics showing primary is slow, Lane switches to faster provider.
+    #[tokio::test]
+    async fn test_lane_mode_picks_best_by_score() {
+        let config = AdaptiveConfig {
+            probe_probability: 0.0,
+            latency_threshold_ms: 100, // Low threshold for fast test
+            ..Default::default()
+        };
+        let router = AdaptiveRouter::new(
+            vec![
+                Arc::new(MockProvider {
+                    name: "slow-primary",
+                    model: "m1",
+                    latency_ms: 50,
+                    fail: false,
+                    error_msg: "",
+                }),
+                Arc::new(MockProvider {
+                    name: "fast-fallback",
+                    model: "m2",
+                    latency_ms: 5,
+                    fail: false,
+                    error_msg: "",
+                }),
+            ],
+            config,
+        );
+
+        // Warm up in Off mode (priority order → primary always selected)
+        router.set_mode(AdaptiveMode::Off);
+        for _ in 0..5 {
+            let resp = router.chat(&[], &[], &ChatConfig::default()).await.unwrap();
+            assert_eq!(resp.content.as_deref(), Some("from-slow-primary"));
+        }
+
+        // Switch to Lane mode. Primary has metrics: ~50ms latency.
+        // primary score  = 0.5*(50/100) + 0 + 0.3*(0/2) = 0.25
+        // fallback (cold) = 0.3*(1/2) = 0.15
+        // 0.15 < 0.25 → lane picks faster fallback
+        router.set_mode(AdaptiveMode::Lane);
+        let resp = router.chat(&[], &[], &ChatConfig::default()).await.unwrap();
+        assert_eq!(resp.content.as_deref(), Some("from-fast-fallback"));
+    }
+
+    /// Hedge mode with single provider falls through to single-provider path.
+    #[tokio::test]
+    async fn test_hedge_single_provider_falls_through() {
+        let config = AdaptiveConfig {
+            probe_probability: 0.0,
+            ..Default::default()
+        };
+        let router = AdaptiveRouter::new(
+            vec![Arc::new(MockProvider {
+                name: "only",
+                model: "m1",
+                latency_ms: 10,
+                fail: false,
+                error_msg: "",
+            })],
+            config,
+        );
+        router.set_mode(AdaptiveMode::Hedge);
+
+        // Should succeed via single-provider path (hedged_chat returns None)
+        let resp = router.chat(&[], &[], &ChatConfig::default()).await.unwrap();
+        assert_eq!(resp.content.as_deref(), Some("from-only"));
+    }
+
+    /// Runtime mode switching works correctly.
+    #[test]
+    fn test_mode_switch_at_runtime() {
+        let router = AdaptiveRouter::new(
+            vec![
+                Arc::new(MockProvider {
+                    name: "p1",
+                    model: "m1",
+                    latency_ms: 0,
+                    fail: false,
+                    error_msg: "",
+                }),
+                Arc::new(MockProvider {
+                    name: "p2",
+                    model: "m2",
+                    latency_ms: 0,
+                    fail: false,
+                    error_msg: "",
+                }),
+            ],
+            AdaptiveConfig::default(),
+        );
+
+        assert_eq!(router.mode(), AdaptiveMode::Off);
+        router.set_mode(AdaptiveMode::Hedge);
+        assert_eq!(router.mode(), AdaptiveMode::Hedge);
+        router.set_mode(AdaptiveMode::Lane);
+        assert_eq!(router.mode(), AdaptiveMode::Lane);
+        router.set_mode(AdaptiveMode::Off);
+        assert_eq!(router.mode(), AdaptiveMode::Off);
+    }
+
+    /// Adaptive status reports current mode and provider count.
+    #[tokio::test]
+    async fn test_adaptive_status_reports_correctly() {
+        let router = AdaptiveRouter::new(
+            vec![
+                Arc::new(MockProvider {
+                    name: "p1",
+                    model: "m1",
+                    latency_ms: 10,
+                    fail: false,
+                    error_msg: "",
+                }),
+                Arc::new(MockProvider {
+                    name: "p2",
+                    model: "m2",
+                    latency_ms: 5,
+                    fail: false,
+                    error_msg: "",
+                }),
+            ],
+            AdaptiveConfig::default(),
+        );
+
+        let status = router.adaptive_status();
+        assert_eq!(status.mode, AdaptiveMode::Off);
+        assert_eq!(status.provider_count, 2);
+
+        router.set_mode(AdaptiveMode::Hedge);
+        let status = router.adaptive_status();
+        assert_eq!(status.mode, AdaptiveMode::Hedge);
+    }
+
+    /// Metrics export includes all providers after calls.
+    #[tokio::test]
+    async fn test_metrics_export_after_calls() {
+        let router = AdaptiveRouter::new(
+            vec![
+                Arc::new(MockProvider {
+                    name: "primary",
+                    model: "m1",
+                    latency_ms: 10,
+                    fail: false,
+                    error_msg: "",
+                }),
+                Arc::new(MockProvider {
+                    name: "fallback",
+                    model: "m2",
+                    latency_ms: 5,
+                    fail: false,
+                    error_msg: "",
+                }),
+            ],
+            AdaptiveConfig {
+                probe_probability: 0.0,
+                ..Default::default()
+            },
+        );
+
+        // Make some calls
+        for _ in 0..3 {
+            let _ = router.chat(&[], &[], &ChatConfig::default()).await;
+        }
+
+        let shared = router.export_shared_metrics();
+        assert_eq!(shared.providers.len(), 2);
+        // Primary was called 3 times
+        let primary = shared
+            .providers
+            .iter()
+            .find(|p| p.provider == "primary")
+            .unwrap();
+        assert_eq!(primary.metrics.success_count, 3);
+        // Fallback not called (Off mode uses priority)
+        let fallback = shared
+            .providers
+            .iter()
+            .find(|p| p.provider == "fallback")
+            .unwrap();
+        assert_eq!(fallback.metrics.success_count, 0);
+    }
+
+    /// QoS ranking toggle is independent of mode.
+    #[test]
+    fn test_qos_ranking_toggle() {
+        let router = AdaptiveRouter::new(
+            vec![Arc::new(MockProvider {
+                name: "p1",
+                model: "m1",
+                latency_ms: 0,
+                fail: false,
+                error_msg: "",
+            })],
+            AdaptiveConfig::default(),
+        );
+
+        let status = router.adaptive_status();
+        assert!(!status.qos_ranking);
+
+        router.set_qos_ranking(true);
+        let status = router.adaptive_status();
+        assert!(status.qos_ranking);
+
+        // QoS ranking can be on with any mode
+        router.set_mode(AdaptiveMode::Hedge);
+        let status = router.adaptive_status();
+        assert!(status.qos_ranking);
+        assert_eq!(status.mode, AdaptiveMode::Hedge);
     }
 }

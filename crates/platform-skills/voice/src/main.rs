@@ -30,7 +30,6 @@ struct SynthesizeInput {
     speaker: Option<String>,
 }
 
-
 // ── Helpers ──────────────────────────────────────────────────────────
 
 fn api_base_url() -> String {
@@ -318,8 +317,15 @@ fn handle_list_models(_input_json: &str) {
         for m in models {
             let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("?");
             let mtype = m.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-            let downloaded = m.get("downloaded").and_then(|v| v.as_bool()).unwrap_or(false);
-            let status = if downloaded { "downloaded" } else { "not downloaded" };
+            let downloaded = m
+                .get("downloaded")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let status = if downloaded {
+                "downloaded"
+            } else {
+                "not downloaded"
+            };
             output.push_str(&format!("- {id} ({mtype}) [{status}]\n"));
         }
     }
@@ -359,7 +365,10 @@ fn handle_download_model(input_json: &str) {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if !status.is_success() {
-        fail(&format!("Download failed (HTTP {status}): {}", truncate(&text, 200)));
+        fail(&format!(
+            "Download failed (HTTP {status}): {}",
+            truncate(&text, 200)
+        ));
     }
 
     succeed(&format!(
@@ -406,10 +415,16 @@ fn handle_load_model(input_json: &str) {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if !status.is_success() {
-        fail(&format!("Load failed (HTTP {status}): {}", truncate(&text, 200)));
+        fail(&format!(
+            "Load failed (HTTP {status}): {}",
+            truncate(&text, 200)
+        ));
     }
 
-    succeed(&format!("Model loaded: {} (type: {})", input.model, input.model_type));
+    succeed(&format!(
+        "Model loaded: {} (type: {})",
+        input.model, input.model_type
+    ));
 }
 
 #[derive(Deserialize)]
@@ -441,7 +456,10 @@ fn handle_unload_model(input_json: &str) {
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if !status.is_success() {
-        fail(&format!("Unload failed (HTTP {status}): {}", truncate(&text, 200)));
+        fail(&format!(
+            "Unload failed (HTTP {status}): {}",
+            truncate(&text, 200)
+        ));
     }
 
     succeed(&format!("Model unloaded: {}", input.model_type));

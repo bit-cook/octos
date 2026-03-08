@@ -88,6 +88,13 @@ impl Session {
             &self.messages[len - max..]
         }
     }
+
+    /// Sort messages by timestamp. Used after concurrent writes (speculative
+    /// overflow) to restore chronological order. Stable sort preserves
+    /// insertion order for messages with identical timestamps.
+    pub fn sort_by_timestamp(&mut self) {
+        self.messages.sort_by_key(|m| m.timestamp);
+    }
 }
 
 /// Default maximum number of sessions kept in memory.
@@ -754,6 +761,56 @@ mod tests {
         assert_eq!(history.len(), 2);
     }
 
+    #[test]
+    fn test_sort_by_timestamp_restores_order() {
+        use chrono::Duration;
+        let mut session = Session::new(SessionKey::new("cli", "test"));
+        let t0 = Utc::now();
+
+        // Simulate speculative overflow: primary pre-saved at t0,
+        // overflow inserted at t0+15s, primary results saved at t0+45s.
+        let mut msg_a = make_message(MessageRole::User, "primary question");
+        msg_a.timestamp = t0;
+
+        let mut msg_b_user = make_message(MessageRole::User, "overflow question");
+        msg_b_user.timestamp = t0 + Duration::seconds(15);
+
+        let mut msg_b_asst = make_message(MessageRole::Assistant, "overflow answer");
+        msg_b_asst.timestamp = t0 + Duration::seconds(16);
+
+        // Primary's tool call happened at t=5s but saved later
+        let mut msg_a_tool = make_message(MessageRole::Assistant, "tool_call for primary");
+        msg_a_tool.timestamp = t0 + Duration::seconds(5);
+
+        let mut msg_a_result = make_message(MessageRole::User, "tool_result");
+        msg_a_result.timestamp = t0 + Duration::seconds(8);
+
+        let mut msg_a_reply = make_message(MessageRole::Assistant, "primary answer");
+        msg_a_reply.timestamp = t0 + Duration::seconds(44);
+
+        // Insert in write order (primary pre-save, overflow, primary completion)
+        session.messages.push(msg_a); // t0
+        session.messages.push(msg_b_user); // t0+15
+        session.messages.push(msg_b_asst); // t0+16
+        session.messages.push(msg_a_tool); // t0+5 (out of order!)
+        session.messages.push(msg_a_result); // t0+8 (out of order!)
+        session.messages.push(msg_a_reply); // t0+44
+
+        // Before sort: insertion order
+        assert_eq!(session.messages[1].content, "overflow question");
+        assert_eq!(session.messages[3].content, "tool_call for primary");
+
+        session.sort_by_timestamp();
+
+        // After sort: chronological order
+        assert_eq!(session.messages[0].content, "primary question"); // t0
+        assert_eq!(session.messages[1].content, "tool_call for primary"); // t0+5
+        assert_eq!(session.messages[2].content, "tool_result"); // t0+8
+        assert_eq!(session.messages[3].content, "overflow question"); // t0+15
+        assert_eq!(session.messages[4].content, "overflow answer"); // t0+16
+        assert_eq!(session.messages[5].content, "primary answer"); // t0+44
+    }
+
     #[tokio::test]
     async fn test_session_manager_create_and_retrieve() {
         let tmp = TempDir::new().unwrap();
@@ -1086,10 +1143,7 @@ mod tests {
             SessionManager::decode_filename("cli%3Adefault"),
             "cli:default"
         );
-        assert_eq!(
-            SessionManager::decode_filename("plain-name"),
-            "plain-name"
-        );
+        assert_eq!(SessionManager::decode_filename("plain-name"), "plain-name");
         // Double-byte UTF-8 round-trip
         assert_eq!(
             SessionManager::decode_filename("hello%E4%B8%96%E7%95%8C"),

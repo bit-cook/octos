@@ -557,24 +557,32 @@ impl Tool for ViewSessionsTool {
             // Read specific session
             let max_lines = input.lines.min(100);
             // Simple percent-encode for query parameter
-            let encoded_key: String = key.bytes().map(|b| {
-                if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
-                    format!("{}", b as char)
-                } else {
-                    format!("%{b:02X}")
-                }
-            }).collect();
+            let encoded_key: String = key
+                .bytes()
+                .map(|b| {
+                    if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~'
+                    {
+                        format!("{}", b as char)
+                    } else {
+                        format!("%{b:02X}")
+                    }
+                })
+                .collect();
             let url = format!(
                 "/api/admin/profiles/{}/sessions/read?key={}&lines={}",
-                input.profile_id,
-                encoded_key,
-                max_lines
+                input.profile_id, encoded_key, max_lines
             );
             match self.ctx.get(&url).await {
                 Ok(data) => {
-                    let total = data.get("total_messages").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let total = data
+                        .get("total_messages")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let returned = data.get("returned").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let updated = data.get("updated_at").and_then(|v| v.as_str()).unwrap_or("?");
+                    let updated = data
+                        .get("updated_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
 
                     let mut out = format!(
                         "Session '{}' ({} total messages, showing last {}, updated: {}):\n\n",
@@ -588,8 +596,10 @@ impl Tool for ViewSessionsTool {
                             out.push_str(&format!("[{}] {}\n", role, content));
                             if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
                                 for tc in tcs {
-                                    let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                                    let args = tc.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
+                                    let name =
+                                        tc.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                                    let args =
+                                        tc.get("arguments").and_then(|v| v.as_str()).unwrap_or("");
                                     out.push_str(&format!("  -> tool_call: {}({})\n", name, args));
                                 }
                             }
@@ -610,7 +620,14 @@ impl Tool for ViewSessionsTool {
             }
         } else {
             // List all sessions
-            match self.ctx.get(&format!("/api/admin/profiles/{}/sessions", input.profile_id)).await {
+            match self
+                .ctx
+                .get(&format!(
+                    "/api/admin/profiles/{}/sessions",
+                    input.profile_id
+                ))
+                .await
+            {
                 Ok(data) => {
                     let count = data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
                     let mut out = format!("{} sessions for '{}':\n\n", count, input.profile_id);
@@ -619,11 +636,15 @@ impl Tool for ViewSessionsTool {
                         for s in sessions {
                             let key = s.get("key").and_then(|v| v.as_str()).unwrap_or("?");
                             let msgs = s.get("messages").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let modified = s.get("modified").and_then(|v| v.as_str()).unwrap_or("?");
+                            let modified =
+                                s.get("modified").and_then(|v| v.as_str()).unwrap_or("?");
                             let size = s.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
                             out.push_str(&format!(
                                 "  {} — {} msgs, {}KB, modified: {}\n",
-                                key, msgs, size / 1024, modified
+                                key,
+                                msgs,
+                                size / 1024,
+                                modified
                             ));
                         }
                     }
@@ -677,7 +698,11 @@ impl Tool for CronStatusTool {
         let input: ProfileIdInput =
             serde_json::from_value(args.clone()).map_err(|e| eyre::eyre!("invalid input: {e}"))?;
 
-        match self.ctx.get(&format!("/api/admin/profiles/{}/cron", input.profile_id)).await {
+        match self
+            .ctx
+            .get(&format!("/api/admin/profiles/{}/cron", input.profile_id))
+            .await
+        {
             Ok(data) => {
                 let count = data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
                 if count == 0 {
@@ -696,8 +721,14 @@ impl Tool for CronStatusTool {
                         let name = j.get("name").and_then(|v| v.as_str()).unwrap_or("?");
                         let enabled = j.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
                         let message = j.get("message").and_then(|v| v.as_str()).unwrap_or("?");
-                        let last_run = j.get("last_run").and_then(|v| v.as_str()).unwrap_or("never");
-                        let last_status = j.get("last_status").and_then(|v| v.as_str()).unwrap_or("n/a");
+                        let last_run = j
+                            .get("last_run")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("never");
+                        let last_status = j
+                            .get("last_status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("n/a");
                         let next_in = j.get("next_in").and_then(|v| v.as_str()).unwrap_or("n/a");
                         let status_icon = if enabled { "ON" } else { "OFF" };
 
@@ -755,10 +786,20 @@ impl Tool for CheckConfigTool {
         let input: ProfileIdInput =
             serde_json::from_value(args.clone()).map_err(|e| eyre::eyre!("invalid input: {e}"))?;
 
-        match self.ctx.get(&format!("/api/admin/profiles/{}/config-check", input.profile_id)).await {
+        match self
+            .ctx
+            .get(&format!(
+                "/api/admin/profiles/{}/config-check",
+                input.profile_id
+            ))
+            .await
+        {
             Ok(data) => {
                 let name = data.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-                let enabled = data.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                let enabled = data
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let provider = data.get("provider").and_then(|v| v.as_str()).unwrap_or("?");
                 let model = data.get("model").and_then(|v| v.as_str()).unwrap_or("?");
 
@@ -771,7 +812,9 @@ impl Tool for CheckConfigTool {
                     let running = gw.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
                     let uptime = gw.get("uptime_secs").and_then(|v| v.as_i64());
                     if running {
-                        let uptime_str = uptime.map(super::format_duration).unwrap_or_else(|| "?".into());
+                        let uptime_str = uptime
+                            .map(super::format_duration)
+                            .unwrap_or_else(|| "?".into());
                         out.push_str(&format!("  Gateway: RUNNING (uptime: {uptime_str})\n"));
                     } else {
                         out.push_str("  Gateway: STOPPED\n");
@@ -781,42 +824,95 @@ impl Tool for CheckConfigTool {
                 // Channels
                 if let Some(channels) = data.get("channels").and_then(|v| v.as_array()) {
                     let ch_list: Vec<&str> = channels.iter().filter_map(|v| v.as_str()).collect();
-                    out.push_str(&format!("  Channels: {}\n", if ch_list.is_empty() { "none".into() } else { ch_list.join(", ") }));
+                    out.push_str(&format!(
+                        "  Channels: {}\n",
+                        if ch_list.is_empty() {
+                            "none".into()
+                        } else {
+                            ch_list.join(", ")
+                        }
+                    ));
                 }
 
                 // Email
                 if let Some(email) = data.get("email") {
-                    let configured = email.get("configured").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let configured = email
+                        .get("configured")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     if configured {
                         out.push_str("  Email (SMTP): CONFIGURED\n");
                     } else {
                         let mut missing = Vec::new();
-                        if !email.get("smtp_host").and_then(|v| v.as_bool()).unwrap_or(false) { missing.push("host"); }
-                        if !email.get("username").and_then(|v| v.as_bool()).unwrap_or(false) { missing.push("username"); }
-                        if !email.get("password").and_then(|v| v.as_bool()).unwrap_or(false) { missing.push("password"); }
-                        out.push_str(&format!("  Email (SMTP): NOT CONFIGURED (missing: {})\n", missing.join(", ")));
+                        if !email
+                            .get("smtp_host")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            missing.push("host");
+                        }
+                        if !email
+                            .get("username")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            missing.push("username");
+                        }
+                        if !email
+                            .get("password")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            missing.push("password");
+                        }
+                        out.push_str(&format!(
+                            "  Email (SMTP): NOT CONFIGURED (missing: {})\n",
+                            missing.join(", ")
+                        ));
                     }
                 }
 
                 // Env vars
                 if let Some(vars) = data.get("env_vars").and_then(|v| v.as_array()) {
                     let var_names: Vec<&str> = vars.iter().filter_map(|v| v.as_str()).collect();
-                    out.push_str(&format!("  Env vars: {} set ({})\n", var_names.len(),
-                        if var_names.is_empty() { "none".into() } else { var_names.join(", ") }));
+                    out.push_str(&format!(
+                        "  Env vars: {} set ({})\n",
+                        var_names.len(),
+                        if var_names.is_empty() {
+                            "none".into()
+                        } else {
+                            var_names.join(", ")
+                        }
+                    ));
                 }
 
                 // Skills
                 if let Some(skills) = data.get("installed_skills").and_then(|v| v.as_array()) {
                     let skill_names: Vec<&str> = skills.iter().filter_map(|v| v.as_str()).collect();
-                    out.push_str(&format!("  Skills: {}\n",
-                        if skill_names.is_empty() { "none".into() } else { skill_names.join(", ") }));
+                    out.push_str(&format!(
+                        "  Skills: {}\n",
+                        if skill_names.is_empty() {
+                            "none".into()
+                        } else {
+                            skill_names.join(", ")
+                        }
+                    ));
                 }
 
                 // Sessions & cron
-                let sessions = data.get("sessions_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                let has_cron = data.get("has_cron_jobs").and_then(|v| v.as_bool()).unwrap_or(false);
+                let sessions = data
+                    .get("sessions_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let has_cron = data
+                    .get("has_cron_jobs")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 out.push_str(&format!("  Sessions: {sessions} files\n"));
-                out.push_str(&format!("  Cron jobs: {}\n", if has_cron { "yes" } else { "none" }));
+                out.push_str(&format!(
+                    "  Cron jobs: {}\n",
+                    if has_cron { "yes" } else { "none" }
+                ));
 
                 Ok(ToolResult {
                     output: out,

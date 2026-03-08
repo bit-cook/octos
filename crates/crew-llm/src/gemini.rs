@@ -702,8 +702,9 @@ fn map_gemini_sse(state: &mut GeminiStreamState, event: &crate::sse::SseEvent) -
                     "STOP" if state.has_tool_calls => StopReason::ToolUse,
                     "STOP" => StopReason::EndTurn,
                     "MAX_TOKENS" => StopReason::MaxTokens,
-                    "SAFETY" | "RECITATION" | "OTHER" | "BLOCKLIST"
-                    | "PROHIBITED_CONTENT" => StopReason::ContentFiltered,
+                    "SAFETY" | "RECITATION" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" => {
+                        StopReason::ContentFiltered
+                    }
                     "MALFORMED_FUNCTION_CALL" => {
                         tracing::warn!("Gemini returned MALFORMED_FUNCTION_CALL (streaming)");
                         StopReason::EndTurn
@@ -1053,7 +1054,10 @@ mod tests {
             ..Default::default()
         };
         let gen_config = build_gemini_generation_config(&config);
-        assert_eq!(gen_config.response_mime_type.as_deref(), Some("application/json"));
+        assert_eq!(
+            gen_config.response_mime_type.as_deref(),
+            Some("application/json")
+        );
         assert!(gen_config.response_schema.is_none());
     }
 
@@ -1069,7 +1073,10 @@ mod tests {
             ..Default::default()
         };
         let gen_config = build_gemini_generation_config(&config);
-        assert_eq!(gen_config.response_mime_type.as_deref(), Some("application/json"));
+        assert_eq!(
+            gen_config.response_mime_type.as_deref(),
+            Some("application/json")
+        );
         // additionalProperties should be sanitized away
         let schema = gen_config.response_schema.unwrap();
         assert!(schema.get("additionalProperties").is_none());

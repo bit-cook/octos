@@ -2028,12 +2028,10 @@ pub async fn list_sessions(
             let decoded_key = crew_bus::SessionManager::decode_filename(&file_name);
             let meta = std::fs::metadata(&path).ok();
             let size_bytes = meta.as_ref().map(|m| m.len()).unwrap_or(0);
-            let modified = meta
-                .and_then(|m| m.modified().ok())
-                .map(|t| {
-                    let dt: chrono::DateTime<Utc> = t.into();
-                    dt.to_rfc3339()
-                });
+            let modified = meta.and_then(|m| m.modified().ok()).map(|t| {
+                let dt: chrono::DateTime<Utc> = t.into();
+                dt.to_rfc3339()
+            });
             // Count lines (messages = lines - 1 for metadata line)
             let line_count = std::fs::File::open(&path)
                 .ok()
@@ -2109,29 +2107,31 @@ pub async fn read_session(
 
     let max_lines = query.lines.min(200);
     let messages = session.get_history(max_lines);
-    let msg_json: Vec<serde_json::Value> = messages
-        .iter()
-        .map(|m| {
-            let mut obj = serde_json::json!({
-                "role": m.role.as_str(),
-                "content": truncate_str(&m.content, 500),
-            });
-            if let Some(ref tc) = m.tool_calls {
-                if !tc.is_empty() {
-                    obj["tool_calls"] = serde_json::json!(tc.iter().map(|t| {
+    let msg_json: Vec<serde_json::Value> =
+        messages
+            .iter()
+            .map(|m| {
+                let mut obj = serde_json::json!({
+                    "role": m.role.as_str(),
+                    "content": truncate_str(&m.content, 500),
+                });
+                if let Some(ref tc) = m.tool_calls {
+                    if !tc.is_empty() {
+                        obj["tool_calls"] =
+                            serde_json::json!(tc.iter().map(|t| {
                         serde_json::json!({
                             "name": t.name,
                             "arguments": truncate_str(&t.arguments.to_string(), 200),
                         })
                     }).collect::<Vec<_>>());
+                    }
                 }
-            }
-            if let Some(ref name) = m.tool_call_id {
-                obj["tool_call_id"] = serde_json::json!(name);
-            }
-            obj
-        })
-        .collect();
+                if let Some(ref name) = m.tool_call_id {
+                    obj["tool_call_id"] = serde_json::json!(name);
+                }
+                obj
+            })
+            .collect();
 
     Ok(Json(serde_json::json!({
         "profile_id": id,
@@ -2180,11 +2180,18 @@ pub async fn list_cron_jobs(
         })));
     }
 
-    let content = tokio::fs::read_to_string(&cron_path)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to read cron.json: {e}")))?;
-    let store: crew_bus::CronStore = serde_json::from_str(&content)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to parse cron.json: {e}")))?;
+    let content = tokio::fs::read_to_string(&cron_path).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to read cron.json: {e}"),
+        )
+    })?;
+    let store: crew_bus::CronStore = serde_json::from_str(&content).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to parse cron.json: {e}"),
+        )
+    })?;
 
     let now_ms = Utc::now().timestamp_millis();
     let jobs: Vec<serde_json::Value> = store
@@ -2247,12 +2254,7 @@ pub async fn config_check(
     let data_dir = ps.resolve_data_dir(&profile);
 
     // Check which env vars are set (names only, not values)
-    let env_var_names: Vec<String> = profile
-        .config
-        .env_vars
-        .keys()
-        .cloned()
-        .collect();
+    let env_var_names: Vec<String> = profile.config.env_vars.keys().cloned().collect();
 
     // Check email config
     let email_status = if let Some(ref email) = profile.config.email {

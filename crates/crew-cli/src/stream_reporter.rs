@@ -50,9 +50,9 @@ impl ProgressReporter for ChannelStreamReporter {
                 StreamProgressEvent::StreamDone { iteration }
             }
             ProgressEvent::ToolStarted { name, .. } => StreamProgressEvent::ToolStarted { name },
-            ProgressEvent::ToolCompleted {
-                name, success, ..
-            } => StreamProgressEvent::ToolCompleted { name, success },
+            ProgressEvent::ToolCompleted { name, success, .. } => {
+                StreamProgressEvent::ToolCompleted { name, success }
+            }
             _ => return,
         };
         let _ = self.tx.send(mapped);

@@ -94,6 +94,11 @@ impl ResponsivenessObserver {
     pub fn consecutive_slow_count(&self) -> u32 {
         self.consecutive_slow
     }
+
+    /// Number of latency samples recorded so far.
+    pub fn sample_count(&self) -> usize {
+        self.window.len()
+    }
 }
 
 impl Default for ResponsivenessObserver {
@@ -155,5 +160,78 @@ mod tests {
         obs.record(Duration::from_millis(100));
         obs.record(Duration::from_millis(10000));
         assert!(!obs.should_activate());
+    }
+
+    /// Window caps at max size (20).
+    #[test]
+    fn test_window_caps_at_max_size() {
+        let mut obs = ResponsivenessObserver::new();
+        for i in 0..30 {
+            obs.record(Duration::from_millis(100 + i));
+        }
+        assert_eq!(obs.sample_count(), 20);
+    }
+
+    /// Multiple activation/deactivation cycles work correctly.
+    #[test]
+    fn test_multiple_activation_cycles() {
+        let mut obs = ResponsivenessObserver::new();
+        // Establish baseline at 100ms
+        for _ in 0..5 {
+            obs.record(Duration::from_millis(100));
+        }
+
+        // Cycle 1: degrade → activate
+        for _ in 0..3 {
+            obs.record(Duration::from_millis(400));
+        }
+        assert!(obs.should_activate());
+        obs.set_active(true);
+
+        // Recover → deactivate
+        obs.record(Duration::from_millis(100));
+        assert!(obs.should_deactivate());
+        obs.set_active(false);
+
+        // Cycle 2: degrade again → activate again
+        for _ in 0..3 {
+            obs.record(Duration::from_millis(400));
+        }
+        assert!(obs.should_activate());
+        obs.set_active(true);
+
+        // Recover again
+        obs.record(Duration::from_millis(50));
+        assert!(obs.should_deactivate());
+    }
+
+    /// Latency exactly at threshold (3×baseline) does NOT count as slow.
+    #[test]
+    fn test_at_threshold_boundary_not_triggered() {
+        let mut obs = ResponsivenessObserver::new();
+        // Baseline = 100ms, threshold = 3.0 → slow if > 300ms
+        for _ in 0..5 {
+            obs.record(Duration::from_millis(100));
+        }
+        // Record exactly 300ms three times (not > 300ms)
+        for _ in 0..3 {
+            obs.record(Duration::from_millis(300));
+        }
+        // Should NOT activate (300ms is not > 300ms)
+        assert!(!obs.should_activate());
+    }
+
+    /// sample_count tracks correctly.
+    #[test]
+    fn test_sample_count_tracking() {
+        let mut obs = ResponsivenessObserver::new();
+        assert_eq!(obs.sample_count(), 0);
+        obs.record(Duration::from_millis(100));
+        assert_eq!(obs.sample_count(), 1);
+        for _ in 0..4 {
+            obs.record(Duration::from_millis(100));
+        }
+        assert_eq!(obs.sample_count(), 5);
+        assert!(obs.baseline().is_some());
     }
 }
