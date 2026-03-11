@@ -6,12 +6,14 @@ import TelegramTab from '../../components/tabs/TelegramTab'
 import DiscordTab from '../../components/tabs/DiscordTab'
 import WhatsAppTab from '../../components/tabs/WhatsAppTab'
 import FeishuTab from '../../components/tabs/FeishuTab'
+import WeComBotTab from '../../components/tabs/WeComBotTab'
 
 const TABS = [
   { key: 'telegram', label: 'Telegram' },
   { key: 'discord', label: 'Discord' },
   { key: 'whatsapp', label: 'WhatsApp' },
   { key: 'feishu', label: 'Feishu' },
+  { key: 'wecom-bot', label: 'WeCom' },
 ]
 
 export default function MessagingPage() {
@@ -40,6 +42,7 @@ export default function MessagingPage() {
           {activeTab === 'discord' && <DiscordTab config={config} onChange={setConfig} />}
           {activeTab === 'whatsapp' && <WhatsAppTab config={config} onChange={setConfig} isRunning={isRunning} />}
           {activeTab === 'feishu' && <FeishuTab config={config} onChange={setConfig} profileId={profileId} />}
+          {activeTab === 'wecom-bot' && <WeComBotTab config={config} onChange={setConfig} />}
         </div>
         <SaveFooter onSave={save} saving={saving} />
       </div>
