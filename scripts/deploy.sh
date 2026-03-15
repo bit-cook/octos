@@ -1,123 +1,507 @@
 #!/usr/bin/env bash
-# Deploy crew + app-skill binaries to Cloud Mac Minis.
-# Usage: ./scripts/deploy.sh [1|2|all]
-#   1   = deploy to Mac Mini 1 only (69.194.3.128)
-#   2   = deploy to Mac Mini 2 only (69.194.3.129)
-#   all = deploy to both (default)
+# Deploy crew + app-skill binaries to remote macOS hosts.
+#
+# Usage:
+#   ./scripts/deploy.sh [1|2|all]                          # Built-in Mac Minis
+#   ./scripts/deploy.sh user@host --password <pw>          # Custom host + password
+#   ./scripts/deploy.sh user@host --key <keyfile>          # Custom host + SSH key
+#   ./scripts/deploy.sh user@host                          # Custom host + default SSH key
+#
+# Options:
+#   --password <pw>       Authenticate with password (requires sshpass)
+#   --key <keyfile>       Authenticate with SSH key file
+#   --remote-bin <path>   Remote binary directory (default: ~/.cargo/bin)
+#   --remote-data <path>  Remote data directory (default: ~/.crew)
+#   --plist <label>       Launchd plist label (default: io.ominix.crew-serve)
+#   --skip-build          Skip local build step
+#   --skip-ominix         Skip ominix-api build and deploy
+#   --init                Initialize data dir on fresh machine (clean slate)
+#   --clone-from <1|2>    Clone profiles & config from built-in Mac Mini
+#   --serve-port <port>   Port for crew serve (default: 3000)
+#
+# Examples:
+#   ./scripts/deploy.sh 1                                   # Mac Mini 1
+#   ./scripts/deploy.sh all                                 # Both Mac Minis
+#   ./scripts/deploy.sh admin@10.0.1.50 --key ~/.ssh/id_ed25519 --init
+#   ./scripts/deploy.sh user@host --password s3cret --clone-from 1
+#   ./scripts/deploy.sh user@host --remote-bin /opt/crew/bin --remote-data /opt/crew/data
 set -euo pipefail
 
-# --- Targets ---
+# --- Built-in targets ---
 HOST_1="cloud@69.194.3.128"
 PW_1="zjsgf128"
 HOST_2="cloud@69.194.3.129"
 PW_2="vbasx129"
+HOST_3="cloud@69.194.3.203"
+PW_3="b_KPfpN7Ge2ggxF-"
 
-TARGET="${1:-all}"
-REMOTE_BIN="/Users/cloud/.cargo/bin"
+# --- Defaults ---
 PLIST="io.ominix.crew-serve"
-BINARIES=(crew news_fetch deep-search deep_crawl send_email account_manager voice clock weather)
+SKIP_BUILD=false
+SKIP_OMINIX=false
+INIT_FRESH=false
+CLONE_FROM=""
+REMOTE_DATA=""
+SERVE_PORT="3000"
+BINARIES=(crew news_fetch deep-search deep_crawl send_email account_manager voice voice-skill clock weather)
 
-ssh_cmd() {
-    local idx=$1; shift
+# --- Parse arguments ---
+# We build parallel arrays: DEPLOY_HOSTS[], DEPLOY_AUTH_TYPE[], DEPLOY_AUTH_VAL[], DEPLOY_LABEL[]
+DEPLOY_HOSTS=()
+DEPLOY_AUTH_TYPE=()
+DEPLOY_AUTH_VAL=()
+DEPLOY_LABEL=()
+REMOTE_BIN=""
+
+parse_builtin_target() {
+    local idx=$1
     local host pw
     eval "host=\$HOST_$idx; pw=\$PW_$idx"
-    sshpass -p "$pw" ssh -o PubkeyAuthentication=no "$host" "$@"
-}
-scp_cmd() {
-    local idx=$1; shift
-    local host pw
-    eval "host=\$HOST_$idx; pw=\$PW_$idx"
-    sshpass -p "$pw" scp -o PubkeyAuthentication=no "$@"
-}
-get_host() {
-    eval "echo \$HOST_$1"
+    DEPLOY_HOSTS+=("$host")
+    DEPLOY_AUTH_TYPE+=("password")
+    DEPLOY_AUTH_VAL+=("$pw")
+    DEPLOY_LABEL+=("Mac Mini $idx")
 }
 
-# Determine which targets to deploy to
-case "$TARGET" in
-    1)   TARGETS="1" ;;
-    2)   TARGETS="2" ;;
-    all) TARGETS="1 2" ;;
-    *)   echo "Usage: $0 [1|2|all]"; exit 1 ;;
-esac
+# First pass: extract flags, collect positional args
+POSITIONAL=()
+CUSTOM_AUTH_TYPE=""
+CUSTOM_AUTH_VAL=""
 
-# --- Build ---
-echo "==> Building release binaries..."
-cargo build --release -p crew-cli --features telegram,whatsapp,feishu,twilio,wecom,api
-cargo build --release -p news_fetch -p deep-search -p deep-crawl -p send-email -p account-manager -p voice -p clock -p weather
-
-# Build ominix-api if source is available
-OMINIX_DIR="${OMINIX_DIR:-$HOME/home/ominix-api}"
-if [ -d "$OMINIX_DIR" ]; then
-    echo "==> Building ominix-api..."
-    (cd "$OMINIX_DIR" && cargo build --release -p ominix-api)
-    codesign -s - "$OMINIX_DIR/target/release/ominix-api" 2>/dev/null || true
-fi
-
-echo "==> Signing binaries locally..."
-for bin in "${BINARIES[@]}"; do
-    codesign -s - "target/release/$bin" 2>/dev/null || true
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --password)
+            CUSTOM_AUTH_TYPE="password"
+            CUSTOM_AUTH_VAL="$2"
+            shift 2 ;;
+        --key)
+            CUSTOM_AUTH_TYPE="key"
+            CUSTOM_AUTH_VAL="$2"
+            shift 2 ;;
+        --remote-bin)
+            REMOTE_BIN="$2"
+            shift 2 ;;
+        --remote-data)
+            REMOTE_DATA="$2"
+            shift 2 ;;
+        --plist)
+            PLIST="$2"
+            shift 2 ;;
+        --skip-build)
+            SKIP_BUILD=true
+            shift ;;
+        --skip-ominix)
+            SKIP_OMINIX=true
+            shift ;;
+        --init)
+            INIT_FRESH=true
+            shift ;;
+        --clone-from)
+            CLONE_FROM="$2"
+            if [[ "$CLONE_FROM" != "1" && "$CLONE_FROM" != "2" ]]; then
+                echo "Error: --clone-from must be 1 or 2 (built-in Mac Mini index)"
+                exit 1
+            fi
+            shift 2 ;;
+        --serve-port)
+            SERVE_PORT="$2"
+            shift 2 ;;
+        -h|--help)
+            awk '/^#!/{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
+            exit 0 ;;
+        *)
+            POSITIONAL+=("$1")
+            shift ;;
+    esac
 done
 
+# Second pass: resolve positional args into targets
+if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
+    # Default: deploy to both built-in targets
+    parse_builtin_target 1
+    parse_builtin_target 2
+else
+    for arg in "${POSITIONAL[@]}"; do
+        case "$arg" in
+            1)
+                parse_builtin_target 1 ;;
+            2)
+                parse_builtin_target 2 ;;
+            3)
+                parse_builtin_target 3 ;;
+            all)
+                parse_builtin_target 1
+                parse_builtin_target 2
+                parse_builtin_target 3 ;;
+            *@*)
+                # Custom user@host
+                DEPLOY_HOSTS+=("$arg")
+                if [[ -n "$CUSTOM_AUTH_TYPE" ]]; then
+                    DEPLOY_AUTH_TYPE+=("$CUSTOM_AUTH_TYPE")
+                    DEPLOY_AUTH_VAL+=("$CUSTOM_AUTH_VAL")
+                else
+                    DEPLOY_AUTH_TYPE+=("key")
+                    DEPLOY_AUTH_VAL+=("default")
+                fi
+                DEPLOY_LABEL+=("$arg") ;;
+            *)
+                echo "Error: unknown target '$arg'"
+                echo "Usage: $0 [1|2|all|user@host] [--password pw|--key keyfile]"
+                exit 1 ;;
+        esac
+    done
+fi
+
+if [[ ${#DEPLOY_HOSTS[@]} -eq 0 ]]; then
+    echo "No deploy targets specified."
+    exit 1
+fi
+
+# --- SSH/SCP helpers ---
+# These use the per-target auth arrays.
+_ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=10)
+
+ssh_target() {
+    # ssh_target <index> <command...>
+    local i=$1; shift
+    local host="${DEPLOY_HOSTS[$i]}"
+    local auth_type="${DEPLOY_AUTH_TYPE[$i]}"
+    local auth_val="${DEPLOY_AUTH_VAL[$i]}"
+
+    case "$auth_type" in
+        password)
+            # Try password auth first, fall back to keyboard-interactive (required by some hosts)
+            sshpass -p "$auth_val" ssh "${_ssh_opts[@]}" -o PreferredAuthentications=password,keyboard-interactive "$host" "$@" ;;
+        key)
+            if [[ "$auth_val" == "default" ]]; then
+                ssh "${_ssh_opts[@]}" "$host" "$@"
+            else
+                ssh "${_ssh_opts[@]}" -i "$auth_val" "$host" "$@"
+            fi ;;
+    esac
+}
+
+scp_target() {
+    # scp_target <index> <src> <dest>
+    local i=$1; shift
+    local auth_type="${DEPLOY_AUTH_TYPE[$i]}"
+    local auth_val="${DEPLOY_AUTH_VAL[$i]}"
+
+    case "$auth_type" in
+        password)
+            sshpass -p "$auth_val" scp "${_ssh_opts[@]}" -o PreferredAuthentications=password,keyboard-interactive "$@" ;;
+        key)
+            if [[ "$auth_val" == "default" ]]; then
+                scp "${_ssh_opts[@]}" "$@"
+            else
+                scp "${_ssh_opts[@]}" -i "$auth_val" "$@"
+            fi ;;
+    esac
+}
+
+# Resolve remote $HOME (cached per target to avoid extra SSH roundtrips)
+REMOTE_HOME_CACHE=()
+resolve_remote_home() {
+    local i=$1
+    if [[ -z "${REMOTE_HOME_CACHE[$i]:-}" ]]; then
+        REMOTE_HOME_CACHE[$i]=$(ssh_target "$i" 'echo $HOME')
+    fi
+    echo "${REMOTE_HOME_CACHE[$i]}"
+}
+
+resolve_remote_bin() {
+    local i=$1
+    if [[ -n "$REMOTE_BIN" ]]; then
+        echo "$REMOTE_BIN"
+    else
+        echo "$(resolve_remote_home "$i")/.cargo/bin"
+    fi
+}
+
+resolve_remote_data() {
+    local i=$1
+    if [[ -n "$REMOTE_DATA" ]]; then
+        echo "$REMOTE_DATA"
+    else
+        echo "$(resolve_remote_home "$i")/.crew"
+    fi
+}
+
+# Clone profiles & prompts from a built-in Mac Mini to local tmpdir
+clone_data_from_builtin() {
+    local src_idx=$1
+    local tmpdir=$(mktemp -d)
+    echo "==> Cloning data from Mac Mini $src_idx..."
+
+    local src_host src_pw
+    eval "src_host=\$HOST_$src_idx; src_pw=\$PW_$src_idx"
+    local _scp_opts=("${_ssh_opts[@]}" -o PubkeyAuthentication=no)
+
+    # Download profiles
+    mkdir -p "$tmpdir/profiles"
+    sshpass -p "$src_pw" scp "${_scp_opts[@]}" \
+        "$src_host:.crew/profiles/*.json" "$tmpdir/profiles/" 2>/dev/null || true
+    echo "    Profiles: $(ls "$tmpdir/profiles/"*.json 2>/dev/null | wc -l | tr -d ' ') found"
+
+    # Download prompts (use tar to avoid scp -r double-nesting)
+    sshpass -p "$src_pw" ssh "${_ssh_opts[@]}" -o PubkeyAuthentication=no \
+        "$src_host" "tar -cf - -C .crew prompts 2>/dev/null" \
+        | tar -xf - -C "$tmpdir" 2>/dev/null || true
+
+    # Download individual files
+    for f in persona.md status_words.json; do
+        sshpass -p "$src_pw" scp "${_scp_opts[@]}" \
+            "$src_host:.crew/$f" "$tmpdir/" 2>/dev/null || true
+    done
+
+    echo "$tmpdir"
+}
+
+# Generate crew serve launchd plist.
+# Build content locally with all values resolved, pipe to remote via stdin.
+generate_crew_plist() {
+    local i=$1
+    local rbin=$2
+    local rdata=$3
+    local port=$4
+    local rhome
+    rhome=$(resolve_remote_home "$i")
+
+    echo "==> Generating crew serve launchd plist (port $port)..."
+
+    cat <<PEOF | ssh_target "$i" "mkdir -p ~/Library/LaunchAgents && cat > ~/Library/LaunchAgents/${PLIST}.plist"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>${PLIST}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${rbin}/crew</string>
+        <string>serve</string>
+        <string>--port</string>
+        <string>${port}</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${rdata}/serve.log</string>
+    <key>StandardErrorPath</key>
+    <string>${rdata}/serve.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>${rbin}:${rhome}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>${rhome}</string>
+        <key>CREW_DATA_DIR</key>
+        <string>${rdata}</string>
+    </dict>
+    <key>WorkingDirectory</key>
+    <string>${rhome}</string>
+</dict>
+</plist>
+PEOF
+    echo "    plist written"
+}
+
+# --- Build ---
+if [[ "$SKIP_BUILD" == false ]]; then
+    echo "==> Building release binaries..."
+    cargo build --release -p crew-cli --features telegram,whatsapp,feishu,twilio,wecom,api
+    cargo build --release -p news_fetch -p deep-search -p deep-crawl -p send-email -p account-manager -p voice -p voice-skill -p clock -p weather
+
+    # Build ominix-api if source is available
+    OMINIX_DIR="${OMINIX_DIR:-$HOME/home/ominix-api}"
+    if [[ "$SKIP_OMINIX" == false ]] && [ -d "$OMINIX_DIR" ]; then
+        echo "==> Building ominix-api..."
+        (cd "$OMINIX_DIR" && cargo build --release -p ominix-api)
+        codesign -s - "$OMINIX_DIR/target/release/ominix-api" 2>/dev/null || true
+    fi
+
+    echo "==> Signing binaries locally..."
+    for bin in "${BINARIES[@]}"; do
+        codesign -s - "target/release/$bin" 2>/dev/null || true
+    done
+else
+    echo "==> Skipping build (--skip-build)"
+    OMINIX_DIR="${OMINIX_DIR:-$HOME/home/ominix-api}"
+fi
+
+# --- Pre-fetch clone data if needed ---
+CLONE_TMPDIR=""
+if [[ -n "$CLONE_FROM" ]]; then
+    CLONE_TMPDIR=$(clone_data_from_builtin "$CLONE_FROM")
+fi
+
 # --- Deploy to each target ---
-for idx in $TARGETS; do
-    REMOTE=$(get_host "$idx")
+for ((i=0; i<${#DEPLOY_HOSTS[@]}; i++)); do
+    REMOTE="${DEPLOY_HOSTS[$i]}"
+    LABEL="${DEPLOY_LABEL[$i]}"
+    RBIN=$(resolve_remote_bin "$i")
+    RDATA=$(resolve_remote_data "$i")
+
     echo ""
     echo "========================================"
-    echo "==> Deploying to Mac Mini $idx ($REMOTE)"
+    echo "==> Deploying to $LABEL ($REMOTE)"
+    echo "==> Remote bin:  $RBIN"
+    echo "==> Remote data: $RDATA"
     echo "========================================"
+
+    # Ensure remote dirs exist
+    ssh_target "$i" "mkdir -p '$RBIN'"
+    ssh_target "$i" "mkdir -p '$RDATA'"
+
+    # --- Data directory setup (--init or --clone-from) ---
+    if [[ "$INIT_FRESH" == true ]] || [[ -n "$CLONE_FROM" ]]; then
+        # Safety check: detect existing installation
+        EXISTING_PROFILES=$(ssh_target "$i" "ls '$RDATA'/profiles/*.json 2>/dev/null | wc -l | tr -d ' '" 2>/dev/null || echo "0")
+        EXISTING_SESSIONS=$(ssh_target "$i" "ls '$RDATA'/sessions/ 2>/dev/null | wc -l | tr -d ' '" 2>/dev/null || echo "0")
+
+        if [[ "$EXISTING_PROFILES" -gt 0 ]]; then
+            echo ""
+            echo "    ⚠  EXISTING INSTALLATION DETECTED at $RDATA"
+            echo "       Profiles: $EXISTING_PROFILES, Sessions: $EXISTING_SESSIONS"
+            echo ""
+            echo "    Options:"
+            echo "      y = Overwrite (existing profiles will be backed up to $RDATA/backup/)"
+            echo "      n = Skip data setup (keep existing data, only update binaries)"
+            echo "      q = Abort deploy for this target"
+            echo ""
+            read -rp "    Proceed with data setup? [y/n/q] " answer
+            case "$answer" in
+                y|Y)
+                    # Backup existing data
+                    BACKUP_TS=$(date +%Y%m%d_%H%M%S)
+                    BACKUP_DIR="$RDATA/backup/$BACKUP_TS"
+                    echo "    Backing up to $BACKUP_DIR..."
+                    ssh_target "$i" "mkdir -p '$BACKUP_DIR' && \
+                        cp -a '$RDATA/profiles' '$BACKUP_DIR/' 2>/dev/null; \
+                        cp -a '$RDATA/prompts' '$BACKUP_DIR/' 2>/dev/null; \
+                        cp '$RDATA/persona.md' '$BACKUP_DIR/' 2>/dev/null; \
+                        cp '$RDATA/status_words.json' '$BACKUP_DIR/' 2>/dev/null; \
+                        cp '$RDATA/cron.json' '$BACKUP_DIR/' 2>/dev/null; \
+                        true"
+                    echo "    Backup complete."
+                    ;;
+                n|N)
+                    echo "    Skipping data setup, keeping existing data."
+                    # Still generate plist if it doesn't exist
+                    if ! ssh_target "$i" "[ -f ~/Library/LaunchAgents/${PLIST}.plist ]" 2>/dev/null; then
+                        generate_crew_plist "$i" "$RBIN" "$RDATA" "$SERVE_PORT"
+                    fi
+                    # Jump past the data setup block
+                    SKIP_DATA_SETUP=true
+                    ;;
+                q|Q)
+                    echo "    Aborting deploy for $LABEL."
+                    continue
+                    ;;
+                *)
+                    echo "    Invalid choice. Aborting deploy for $LABEL."
+                    continue
+                    ;;
+            esac
+        fi
+
+        if [[ "${SKIP_DATA_SETUP:-}" != "true" ]]; then
+            echo "==> Setting up data directory..."
+
+            # Create directory structure
+            ssh_target "$i" "mkdir -p '$RDATA'/{profiles,prompts,sessions,skills,media,memory,history,hooks,users,voices,research,backup}"
+
+            if [[ -n "$CLONE_TMPDIR" ]]; then
+                # Upload cloned profiles
+                echo "    Uploading profiles..."
+                for pfile in "$CLONE_TMPDIR"/profiles/*.json; do
+                    [ -f "$pfile" ] || continue
+                    pname=$(basename "$pfile")
+                    echo "      $pname"
+                    scp_target "$i" "$pfile" "$REMOTE:$RDATA/profiles/$pname"
+                done
+                # Upload cloned prompts
+                if ls "$CLONE_TMPDIR"/prompts/* &>/dev/null; then
+                    echo "    Uploading prompts..."
+                    for pfile in "$CLONE_TMPDIR"/prompts/*; do
+                        [ -f "$pfile" ] || continue
+                        scp_target "$i" "$pfile" "$REMOTE:$RDATA/prompts/"
+                    done
+                fi
+                # Upload persona.md
+                if [ -f "$CLONE_TMPDIR/persona.md" ]; then
+                    echo "    Uploading persona.md..."
+                    scp_target "$i" "$CLONE_TMPDIR/persona.md" "$REMOTE:$RDATA/"
+                fi
+                # Upload status_words.json
+                if [ -f "$CLONE_TMPDIR/status_words.json" ]; then
+                    echo "    Uploading status_words.json..."
+                    scp_target "$i" "$CLONE_TMPDIR/status_words.json" "$REMOTE:$RDATA/"
+                fi
+            else
+                # Clean slate — create minimal cron.json
+                ssh_target "$i" "[ -f '$RDATA/cron.json' ] || echo '{\"version\":1,\"jobs\":[]}' > '$RDATA/cron.json'"
+                echo "    Clean slate initialized (no profiles — create with 'crew profile create')"
+            fi
+
+            # Generate crew serve launchd plist
+            generate_crew_plist "$i" "$RBIN" "$RDATA" "$SERVE_PORT"
+        fi
+        unset SKIP_DATA_SETUP
+    fi
 
     echo "==> Uploading binaries..."
     for bin in "${BINARIES[@]}"; do
         echo "    $bin"
-        scp_cmd "$idx" "target/release/$bin" "$REMOTE:/tmp/${bin}.new"
+        scp_target "$i" "target/release/$bin" "$REMOTE:/tmp/${bin}.new"
     done
 
     # Upload ominix-api if built
-    if [ -d "$OMINIX_DIR" ] && [ -f "$OMINIX_DIR/target/release/ominix-api" ]; then
+    if [[ "$SKIP_OMINIX" == false ]] && [ -d "$OMINIX_DIR" ] && [ -f "$OMINIX_DIR/target/release/ominix-api" ]; then
         echo "    ominix-api"
-        scp_cmd "$idx" "$OMINIX_DIR/target/release/ominix-api" "$REMOTE:/tmp/ominix-api.new"
+        scp_target "$i" "$OMINIX_DIR/target/release/ominix-api" "$REMOTE:/tmp/ominix-api.new"
         if [ -f "$OMINIX_DIR/target/release/mlx.metallib" ]; then
             echo "    mlx.metallib"
-            scp_cmd "$idx" "$OMINIX_DIR/target/release/mlx.metallib" "$REMOTE:/tmp/mlx.metallib.new"
+            scp_target "$i" "$OMINIX_DIR/target/release/mlx.metallib" "$REMOTE:/tmp/mlx.metallib.new"
         fi
     fi
 
     echo "==> Stopping launchd service..."
-    ssh_cmd "$idx" "launchctl unload ~/Library/LaunchAgents/${PLIST}.plist 2>/dev/null || true"
+    ssh_target "$i" "launchctl unload ~/Library/LaunchAgents/${PLIST}.plist 2>/dev/null || true"
     sleep 1
-    ssh_cmd "$idx" "pkill -f 'crew serve' 2>/dev/null || true; pkill -f 'crew gateway' 2>/dev/null || true"
+    ssh_target "$i" "pkill -f 'crew serve' 2>/dev/null || true; pkill -f 'crew gateway' 2>/dev/null || true"
     sleep 1
 
     echo "==> Replacing binaries on remote..."
     for bin in "${BINARIES[@]}"; do
-        ssh_cmd "$idx" "mv /tmp/${bin}.new ${REMOTE_BIN}/${bin} && codesign --force -s - ${REMOTE_BIN}/${bin}"
+        ssh_target "$i" "mv /tmp/${bin}.new '${RBIN}/${bin}' && codesign --force -s - '${RBIN}/${bin}'"
     done
 
     # Replace ominix-api if uploaded
-    if ssh_cmd "$idx" "[ -f /tmp/ominix-api.new ]" 2>/dev/null; then
+    if [[ "$SKIP_OMINIX" == false ]] && ssh_target "$i" "[ -f /tmp/ominix-api.new ]" 2>/dev/null; then
         echo "==> Replacing ominix-api on remote..."
-        ssh_cmd "$idx" "launchctl unload ~/Library/LaunchAgents/io.ominix.ominix-api.plist 2>/dev/null || true; sleep 1"
-        ssh_cmd "$idx" "mv /tmp/ominix-api.new ${REMOTE_BIN}/ominix-api && codesign --force -s - ${REMOTE_BIN}/ominix-api"
-        if ssh_cmd "$idx" "[ -f /tmp/mlx.metallib.new ]" 2>/dev/null; then
-            ssh_cmd "$idx" "mv /tmp/mlx.metallib.new ${REMOTE_BIN}/mlx.metallib"
+        ssh_target "$i" "launchctl unload ~/Library/LaunchAgents/io.ominix.ominix-api.plist 2>/dev/null || true; sleep 1"
+        ssh_target "$i" "mv /tmp/ominix-api.new '${RBIN}/ominix-api' && codesign --force -s - '${RBIN}/ominix-api'"
+        if ssh_target "$i" "[ -f /tmp/mlx.metallib.new ]" 2>/dev/null; then
+            ssh_target "$i" "mv /tmp/mlx.metallib.new '${RBIN}/mlx.metallib'"
         fi
     fi
 
     # (Re)generate ominix-api launchd plist with auto-detected models
-    echo "==> Configuring ominix-api service..."
-    ssh_cmd "$idx" 'bash -c '"'"'mkdir -p ~/.ominix
-# Find ominix-api binary (prefer ~/.cargo/bin)
-OMINIX_BIN="$(command -v ominix-api 2>/dev/null || echo /Users/cloud/.cargo/bin/ominix-api)"
-# Find models dir (prefer ~/.ominix/models, fallback ~/.OminiX/models)
+    if [[ "$SKIP_OMINIX" == false ]]; then
+        echo "==> Configuring ominix-api service..."
+        ssh_target "$i" 'bash -c '"'"'mkdir -p ~/.ominix
+REMOTE_USER_HOME="$HOME"
+OMINIX_BIN="$(command -v ominix-api 2>/dev/null || echo "$HOME/.cargo/bin/ominix-api")"
 if [ -d ~/.ominix/models ]; then MODELS_DIR=~/.ominix/models
 elif [ -d ~/.OminiX/models ]; then MODELS_DIR=~/.OminiX/models
 else MODELS_DIR=~/.ominix/models; mkdir -p "$MODELS_DIR"; fi
-# Auto-detect ASR model (use find to avoid zsh glob errors)
 ASR_MODEL="$(find "$MODELS_DIR" -maxdepth 1 -type d \( -name "Qwen3-ASR-*" -o -name "qwen3-asr-*" \) 2>/dev/null | head -1)"
-# Auto-detect TTS model
-TTS_MODEL="$(find "$MODELS_DIR" -maxdepth 1 -type d \( -name "Qwen3-TTS-*" -o -name "qwen3-tts-*" \) 2>/dev/null | head -1)"
-# Build ProgramArguments
+# Prefer CustomVoice model (has preset speakers); fall back to any TTS model
+TTS_MODEL="$(find "$MODELS_DIR" -maxdepth 1 -type d -iname "*customvoice*" 2>/dev/null | head -1)"
+[ -z "$TTS_MODEL" ] && TTS_MODEL="$(find "$MODELS_DIR" -maxdepth 1 -type d \( -name "Qwen3-TTS-*" -o -name "qwen3-tts-*" \) 2>/dev/null | head -1)"
 ARGS="        <string>$OMINIX_BIN</string>
         <string>--port</string>
         <string>8080</string>
@@ -145,13 +529,13 @@ $ARGS
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/cloud/.ominix/api.log</string>
+    <string>$REMOTE_USER_HOME/.ominix/api.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/cloud/.ominix/api.log</string>
+    <string>$REMOTE_USER_HOME/.ominix/api.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/Users/cloud/.local/bin:/Users/cloud/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>$REMOTE_USER_HOME/.local/bin:$REMOTE_USER_HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
@@ -159,50 +543,172 @@ PEOF
 echo "  ASR model: ${ASR_MODEL:-NOT FOUND}"
 echo "  TTS model: ${TTS_MODEL:-NOT FOUND}"
 echo "  ominix-api plist generated"'"'"
-    ssh_cmd "$idx" "launchctl load ~/Library/LaunchAgents/io.ominix.ominix-api.plist 2>/dev/null || true"
-    echo "    ominix-api service started"
+        ssh_target "$i" "launchctl load ~/Library/LaunchAgents/io.ominix.ominix-api.plist 2>/dev/null || true"
+        echo "    ominix-api service started"
+    fi
 
-    echo "==> Ensuring Homebrew and ffmpeg are installed..."
-    ssh_cmd "$idx" 'bash -c '\''
+    echo "==> Ensuring macOS dependencies are installed..."
+    ssh_target "$i" 'bash -c '\''
+        # --- Homebrew ---
         if ! command -v brew &>/dev/null; then
             echo "  Installing Homebrew..."
             NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
             eval "$(/opt/homebrew/bin/brew shellenv)"
-        fi
-        if ! command -v ffmpeg &>/dev/null; then
-            echo "  Installing ffmpeg..."
-            brew install ffmpeg
         else
-            echo "  ffmpeg: OK"
+            echo "  Homebrew: OK"
+            eval "$(/opt/homebrew/bin/brew shellenv 2>/dev/null || /usr/local/bin/brew shellenv 2>/dev/null)" || true
         fi
+
+        # --- Rust toolchain (for cargo-based skill builds) ---
+        if ! command -v cargo &>/dev/null; then
+            echo "  Installing Rust toolchain..."
+            curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+            source "$HOME/.cargo/env"
+        else
+            echo "  Rust/cargo: OK"
+        fi
+
+        # --- CLI tools via brew ---
+        # Map: brew_formula -> command_to_check
+        check_and_install() {
+            local formula=$1 cmd=$2
+            if command -v "$cmd" &>/dev/null; then
+                echo "  $cmd ($formula): OK"
+            else
+                echo "  Installing $formula..."
+                brew install "$formula"
+            fi
+        }
+        check_and_install ffmpeg ffmpeg
+        check_and_install poppler pdftoppm
+        check_and_install node node
+        check_and_install git git
+        check_and_install docker docker
+
+        # --- Colima (lightweight Docker runtime for macOS) ---
+        if ! command -v colima &>/dev/null; then
+            echo "  Installing Colima..."
+            brew install colima
+        else
+            echo "  Colima: OK"
+        fi
+        # Fix Docker credential helper error
+        mkdir -p "$HOME/.docker"
+        if [ ! -f "$HOME/.docker/config.json" ] || grep -q '"credsStore"' "$HOME/.docker/config.json" 2>/dev/null; then
+            echo '{"credsStore":""}' > "$HOME/.docker/config.json"
+        fi
+        # Ensure Colima is running (Docker daemon)
+        if command -v colima &>/dev/null && command -v docker &>/dev/null; then
+            docker context use colima 2>/dev/null || true
+            if ! docker info &>/dev/null 2>&1; then
+                echo "  Starting Colima..."
+                colima start --cpu 2 --memory 4 --disk 20 2>/dev/null || true
+                docker context use colima 2>/dev/null || true
+                brew services start colima 2>/dev/null || true
+            else
+                echo "  Docker daemon: OK"
+            fi
+            # Pre-pull common sandbox images
+            for img in ubuntu:24.04 python:3.12-alpine; do
+                if ! docker image inspect "$img" &>/dev/null 2>&1; then
+                    echo "  Pulling $img..."
+                    docker pull "$img" 2>/dev/null || true
+                else
+                    echo "  Image $img: OK"
+                fi
+            done
+        fi
+
+        # --- LibreOffice (for PPTX/DOCX conversion) ---
+        if [ -d "/Applications/LibreOffice.app" ] || command -v soffice &>/dev/null; then
+            echo "  LibreOffice: OK"
+        else
+            echo "  Installing LibreOffice..."
+            brew install --cask libreoffice --no-quarantine 2>/dev/null || true
+        fi
+
+        # --- Chrome/Chromium (for deep-crawl CDP) ---
+        if [ -d "/Applications/Google Chrome.app" ] || command -v chromium &>/dev/null; then
+            echo "  Chrome/Chromium: OK"
+        else
+            echo "  Installing Chromium..."
+            brew install --cask chromium --no-quarantine 2>/dev/null || true
+        fi
+
+        # --- Global npm packages (for PPTX skill) ---
+        if command -v npm &>/dev/null; then
+            NPM_PKGS=(pptxgenjs sharp react react-dom react-icons)
+            for pkg in "${NPM_PKGS[@]}"; do
+                if ! npm ls -g "$pkg" &>/dev/null; then
+                    echo "  npm install -g $pkg..."
+                    npm install -g "$pkg" 2>/dev/null || true
+                else
+                    echo "  npm $pkg: OK"
+                fi
+            done
+        fi
+
+        # --- Ensure ~/.cargo/bin is in PATH for launchd ---
+        mkdir -p "$HOME/.cargo/bin"
     '\'''
 
     echo "==> Cleaning stale skill dirs (bootstrap recreates them)..."
-    for skill in news deep-search deep-crawl send-email account-manager voice clock weather; do
-        ssh_cmd "$idx" "rm -rf /Users/cloud/.crew/skills/${skill}" 2>/dev/null || true
+    for skill in news deep-search deep-crawl send-email account-manager voice voice-skill clock weather; do
+        ssh_target "$i" "rm -rf '${RDATA}/skills/${skill}'" 2>/dev/null || true
     done
-    # Also clean bundled-app-skills and platform-skills so bootstrap picks up new binaries
-    ssh_cmd "$idx" "rm -rf /Users/cloud/.crew/bundled-app-skills /Users/cloud/.crew/platform-skills" 2>/dev/null || true
+    ssh_target "$i" "rm -rf '${RDATA}/bundled-app-skills' '${RDATA}/platform-skills'" 2>/dev/null || true
 
-    # Verify voice models
-    echo "==> Checking voice models..."
-    ssh_cmd "$idx" 'bash -c '"'"'for d in ~/.ominix/models ~/.OminiX/models; do
-        [ -d "$d" ] || continue
-        ASR="$(find "$d" -maxdepth 1 -type d \( -name "Qwen3-ASR-*" -o -name "qwen3-asr-*" \) 2>/dev/null | head -1)"
-        TTS="$(find "$d" -maxdepth 1 -type d \( -name "Qwen3-TTS-*" -o -name "qwen3-tts-*" \) 2>/dev/null | head -1)"
-        [ -n "$ASR" ] && echo "  ASR: $(basename $ASR)" || echo "  ASR: NOT FOUND"
-        [ -n "$TTS" ] && echo "  TTS: $(basename $TTS)" || echo "  TTS: NOT FOUND"
-        break
-    done'"'"
+    # Download voice models if missing
+    echo "==> Checking and downloading voice models..."
+    ssh_target "$i" 'bash -c '"'"'
+        # Determine models directory
+        if [ -d ~/.ominix/models ]; then MODELS_DIR=~/.ominix/models
+        elif [ -d ~/.OminiX/models ]; then MODELS_DIR=~/.OminiX/models
+        else MODELS_DIR=~/.ominix/models; mkdir -p "$MODELS_DIR"; fi
+
+        # Ensure huggingface-cli is available
+        if ! command -v huggingface-cli &>/dev/null; then
+            echo "  Installing huggingface_hub..."
+            pip3 install -q huggingface_hub 2>/dev/null || pip install -q huggingface_hub 2>/dev/null || {
+                echo "  ERROR: Could not install huggingface_hub. Skipping model downloads."
+                exit 0
+            }
+        fi
+
+        # Models to download: repo_id -> local_dir_name
+        declare -A MODELS
+        MODELS["mlx-community/Qwen3-ASR-1.7B-8bit"]="Qwen3-ASR-1.7B-8bit"
+        MODELS["mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"]="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit"
+        MODELS["mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"]="Qwen3-TTS-12Hz-1.7B-Base-8bit"
+
+        for repo in "${!MODELS[@]}"; do
+            local_name="${MODELS[$repo]}"
+            local_path="$MODELS_DIR/$local_name"
+            if [ -d "$local_path" ] && [ "$(ls -A "$local_path" 2>/dev/null)" ]; then
+                echo "  $local_name: already downloaded, skipping"
+            else
+                echo "  $local_name: downloading from $repo..."
+                huggingface-cli download "$repo" --local-dir "$local_path" || {
+                    echo "  WARNING: Failed to download $local_name"
+                }
+            fi
+        done
+        echo "  Voice models check complete."
+    '"'"
 
     echo "==> Starting launchd service..."
-    ssh_cmd "$idx" "launchctl load ~/Library/LaunchAgents/${PLIST}.plist"
+    ssh_target "$i" "launchctl load ~/Library/LaunchAgents/${PLIST}.plist"
 
     echo "==> Verifying..."
     sleep 2
-    ssh_cmd "$idx" "launchctl list | grep crew || echo 'WARNING: service not found'"
-    echo "==> Mac Mini $idx deploy complete."
+    ssh_target "$i" "launchctl list | grep crew || echo 'WARNING: service not found'"
+    echo "==> $LABEL deploy complete."
 done
+
+# Cleanup
+if [[ -n "$CLONE_TMPDIR" ]] && [[ -d "$CLONE_TMPDIR" ]]; then
+    rm -rf "$CLONE_TMPDIR"
+fi
 
 echo ""
 echo "All deployments complete."
