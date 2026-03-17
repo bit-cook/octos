@@ -11,6 +11,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use super::AppState;
+use super::acp_websocket::acp_websocket_handler;
 use super::admin;
 use super::auth_handlers;
 use super::handlers;
@@ -44,6 +45,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/auth/send-code", post(auth_handlers::send_code))
         .route("/api/auth/verify", post(auth_handlers::verify))
         .route("/api/auth/logout", post(auth_handlers::logout));
+
+    // ACP WebSocket endpoint (unauthenticated for now - can add auth if needed)
+    let acp_route = Router::new()
+        .route("/acp", get(acp_websocket_handler));
 
     // Chat + status API (existing)
     let chat_api = Router::new()
@@ -287,11 +292,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         metrics_route
     };
 
-    // Unauthenticated routes (static files + auth endpoints + webhook proxy)
+    // Unauthenticated routes (static files + auth endpoints + webhook proxy + ACP WebSocket)
     let public = Router::new()
         .merge(metrics_route)
         .merge(auth_api)
-        .merge(webhook_routes);
+        .merge(webhook_routes)
+        .merge(acp_route);
 
     public
         .merge(protected)

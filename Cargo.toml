@@ -72,6 +72,7 @@ colored = "2"
 dirs = "5"
 rustyline = "15"
 open = "5"
+url = "2"
 
 # Keychain (macOS Keychain for secure API key storage)
 keyring = { version = "3", default-features = false, features = ["apple-native"] }

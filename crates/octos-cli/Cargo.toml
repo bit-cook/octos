@@ -36,6 +36,9 @@ rustyline = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
 open = { workspace = true }
+url = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = "0.3"
 zip = { workspace = true }
 quick-xml = { workspace = true }
 image = { workspace = true }
@@ -45,7 +48,7 @@ base64 = { workspace = true }
 keyring = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
-axum = { workspace = true, optional = true }
+axum = { workspace = true, optional = true, features = ["ws"] }
 tower-http = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 rust-embed = { workspace = true, optional = true }

@@ -2,6 +2,7 @@
 //!
 //! Feature-gated behind `api`. Start with `octos serve [--port 8080]`.
 
+mod acp_websocket;
 pub mod admin;
 pub mod auth_handlers;
 mod handlers;
@@ -12,6 +13,7 @@ mod static_files;
 pub mod user_admin;
 pub mod webhook_proxy;
 
+pub use acp_websocket::acp_websocket_handler;
 pub use metrics::init_metrics;
 pub use router::build_router;
 pub use sse::SseBroadcaster;
