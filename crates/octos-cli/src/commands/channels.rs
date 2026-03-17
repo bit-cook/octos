@@ -122,6 +122,10 @@ fn is_channel_compiled(channel_type: &str) -> bool {
         "feishu" | "lark" => true,
         #[cfg(feature = "wecom-bot")]
         "wecom-bot" => true,
+        #[cfg(feature = "matrix")]
+        "matrix" => true,
+        #[cfg(feature = "matrix-appservice")]
+        "matrix-appservice" => true,
         _ => false,
     }
 }
@@ -228,6 +232,43 @@ fn channel_config_summary(channel_type: &str, settings: &serde_json::Value) -> S
                 format!("{id_env}: set")
             } else {
                 format!("{id_env}: not set")
+            }
+        }
+        "matrix" => {
+            let env = settings
+                .get("access_token_env")
+                .and_then(|v| v.as_str())
+                .unwrap_or("MATRIX_ACCESS_TOKEN");
+            let homeserver = settings
+                .get("homeserver")
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://matrix.org");
+            let set = std::env::var(env).is_ok();
+            if set {
+                format!("{homeserver} ({env}: set)")
+            } else {
+                format!("{homeserver} ({env}: not set)")
+            }
+        }
+        "matrix-appservice" => {
+            let as_env = settings
+                .get("as_token_env")
+                .and_then(|v| v.as_str())
+                .unwrap_or("MATRIX_AS_TOKEN");
+            let hs_env = settings
+                .get("hs_token_env")
+                .and_then(|v| v.as_str())
+                .unwrap_or("MATRIX_HS_TOKEN");
+            let port = settings
+                .get("listen_port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(8009);
+            let as_set = std::env::var(as_env).is_ok();
+            let hs_set = std::env::var(hs_env).is_ok();
+            if as_set && hs_set {
+                format!("port {port} (tokens: set)")
+            } else {
+                format!("port {port} ({as_env}/{hs_env}: not set)")
             }
         }
         other => format!("unknown: {other}"),

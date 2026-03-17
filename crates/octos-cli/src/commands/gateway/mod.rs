@@ -47,7 +47,9 @@ pub(crate) use prompt::build_system_prompt;
     feature = "feishu",
     feature = "twilio",
     feature = "wecom",
-    feature = "wecom-bot"
+    feature = "wecom-bot",
+    feature = "matrix",
+    feature = "matrix-appservice"
 ))]
 use prompt::settings_str;
 
@@ -1230,6 +1232,105 @@ impl GatewayCommand {
                         auth_token,
                         shutdown.clone(),
                     )));
+                }
+                #[cfg(feature = "matrix")]
+                "matrix" => {
+                    let homeserver =
+                        settings_str(&entry.settings, "homeserver", "https://matrix.org");
+                    let token_env =
+                        settings_str(&entry.settings, "access_token_env", "MATRIX_ACCESS_TOKEN");
+                    let access_token = std::env::var(&token_env).ok();
+                    let user_id = entry
+                        .settings
+                        .get("user_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let password_env =
+                        settings_str(&entry.settings, "password_env", "MATRIX_PASSWORD");
+                    let password = std::env::var(&password_env).ok();
+                    let device_name = entry
+                        .settings
+                        .get("device_name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let auto_join = entry
+                        .settings
+                        .get("auto_join")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let rooms: Vec<String> = entry
+                        .settings
+                        .get("rooms")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    if access_token.is_none() && password.is_none() {
+                        eyre::bail!(
+                            "Matrix channel requires {token_env} or {password_env} to be set"
+                        );
+                    }
+
+                    let matrix_config = octos_bus::matrix_channel::MatrixChannelConfig {
+                        homeserver,
+                        access_token,
+                        user_id,
+                        password,
+                        device_name,
+                        allowed_senders: entry.allowed_senders.clone(),
+                        allowed_rooms: rooms,
+                        auto_join,
+                    };
+                    channel_mgr.register(Arc::new(octos_bus::MatrixChannel::new(
+                        matrix_config,
+                        shutdown.clone(),
+                    )));
+                }
+                #[cfg(feature = "matrix-appservice")]
+                "matrix-appservice" => {
+                    let homeserver =
+                        settings_str(&entry.settings, "homeserver", "https://matrix.org");
+                    let server_name = settings_str(&entry.settings, "server_name", "");
+                    let appservice_id =
+                        settings_str(&entry.settings, "appservice_id", "octos-matrix");
+                    let as_token_env =
+                        settings_str(&entry.settings, "as_token_env", "MATRIX_AS_TOKEN");
+                    let as_token = std::env::var(&as_token_env)
+                        .wrap_err_with(|| format!("{as_token_env} environment variable not set"))?;
+                    let hs_token_env =
+                        settings_str(&entry.settings, "hs_token_env", "MATRIX_HS_TOKEN");
+                    let hs_token = std::env::var(&hs_token_env)
+                        .wrap_err_with(|| format!("{hs_token_env} environment variable not set"))?;
+                    let sender_localpart =
+                        settings_str(&entry.settings, "sender_localpart", "_octos_bot");
+                    let user_prefix = settings_str(&entry.settings, "user_prefix", "_octos_");
+                    let listen_port: u16 = entry
+                        .settings
+                        .get("listen_port")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(8009) as u16;
+
+                    if server_name.is_empty() {
+                        eyre::bail!("matrix-appservice channel requires settings.server_name");
+                    }
+
+                    let as_config = octos_bus::MatrixAppserviceConfig {
+                        homeserver,
+                        server_name,
+                        appservice_id,
+                        as_token,
+                        hs_token,
+                        sender_localpart,
+                        user_prefix,
+                        listen_port,
+                        allowed_senders: entry.allowed_senders.clone(),
+                    };
+                    channel_mgr
+                        .register(Arc::new(octos_bus::MatrixAppserviceChannel::new(as_config)));
                 }
                 #[cfg(feature = "wecom-bot")]
                 "wecom-bot" => {

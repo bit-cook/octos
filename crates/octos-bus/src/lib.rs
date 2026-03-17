@@ -12,6 +12,15 @@ pub mod markdown_html;
 pub mod media;
 pub mod session;
 
+#[cfg(feature = "matrix-appservice")]
+pub mod matrix_appservice;
+#[cfg(feature = "matrix")]
+pub mod matrix_channel;
+#[cfg(feature = "matrix")]
+pub mod matrix_client;
+#[cfg(feature = "matrix")]
+pub mod matrix_parse;
+
 #[cfg(feature = "api")]
 pub mod api_channel;
 #[cfg(feature = "discord")]
@@ -46,6 +55,11 @@ pub use session::{
     ActiveSessionStore, Session, SessionHandle, SessionListEntry, SessionManager,
     validate_topic_name,
 };
+
+#[cfg(feature = "matrix-appservice")]
+pub use matrix_appservice::{MatrixAppserviceChannel, MatrixAppserviceConfig};
+#[cfg(feature = "matrix")]
+pub use matrix_channel::MatrixChannel;
 
 #[cfg(feature = "api")]
 pub use api_channel::ApiChannel;

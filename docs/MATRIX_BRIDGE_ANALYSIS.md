@@ -219,3 +219,65 @@ OpenClaw implements Matrix as a standalone channel at `extensions/matrix/`, usin
 - [matrix-rust-sdk](https://github.com/matrix-org/matrix-rust-sdk)
 - [Synapse Documentation](https://element-hq.github.io/synapse/latest/)
 - [mautrix bridgev2 Framework](https://docs.mau.fi/bridges/general/bridgev2/)
+
+## Implementation Status
+
+### Implementation Status (completed)
+
+The Matrix channel has been implemented as an optional peer channel with two modes:
+
+#### User Mode (`matrix` feature)
+- Feature flag: `matrix` (zero additional dependencies)
+- Channel type: `"matrix"` in gateway config
+- Single bot account with long-poll `/sync` loop
+- Supports: send, edit, typing indicators, auto-join, health checks
+- Event parsing: `!octos` prefix, bot mentions (body + formatted_body + m.mentions), allowed senders/rooms
+- Exponential backoff on sync errors (1s → 30s)
+
+#### Appservice Mode (`matrix-appservice` feature)
+- Feature flag: `matrix-appservice` (adds `axum` for HTTP server)
+- Channel type: `"matrix-appservice"` in gateway config
+- Per-agent bot accounts via Matrix Application Service API
+- Axum HTTP server with 4 endpoints (transactions, users, rooms, ping)
+- Room-user binding for per-agent message routing
+- `metadata.forced_agent_id` for agent-specific dispatch
+- `registration_yaml()` generates homeserver registration YAML
+- hs_token validation on all endpoints
+
+#### Files
+- `crates/octos-bus/src/matrix_client.rs` — Thin HTTP client (reqwest-based, no matrix-sdk)
+- `crates/octos-bus/src/matrix_parse.rs` — Event parser (18 tests)
+- `crates/octos-bus/src/matrix_channel.rs` — User mode Channel impl (9 tests)
+- `crates/octos-bus/src/matrix_appservice.rs` — Appservice mode Channel impl (16 tests)
+
+#### Configuration
+
+User mode:
+```json
+{
+  "type": "matrix",
+  "settings": {
+    "homeserver": "https://matrix.example.com",
+    "access_token_env": "MATRIX_ACCESS_TOKEN",
+    "rooms": ["!room1:example.com"],
+    "auto_join": true
+  }
+}
+```
+
+Appservice mode:
+```json
+{
+  "type": "matrix-appservice",
+  "settings": {
+    "homeserver": "https://matrix.example.com",
+    "server_name": "example.com",
+    "appservice_id": "octos-matrix",
+    "as_token_env": "MATRIX_AS_TOKEN",
+    "hs_token_env": "MATRIX_HS_TOKEN",
+    "sender_localpart": "_octos_bot",
+    "user_prefix": "_octos_",
+    "listen_port": 8009
+  }
+}
+```

@@ -69,6 +69,8 @@ feishu = ["octos-bus/feishu"]
 twilio = ["octos-bus/twilio"]
 wecom = ["octos-bus/wecom"]
 wecom-bot = ["octos-bus/wecom-bot"]
+matrix = ["octos-bus/matrix"]
+matrix-appservice = ["octos-bus/matrix-appservice"]
 git = ["octos-agent/git"]
 ast = ["octos-agent/ast"]
 
