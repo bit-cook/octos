@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+default-members = ["crates/octos-cli"]
 members = [
     "crates/octos-core",
     "crates/octos-memory",
