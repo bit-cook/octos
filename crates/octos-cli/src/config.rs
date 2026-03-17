@@ -331,8 +331,9 @@ pub struct AdaptiveRoutingConfig {
     #[serde(default)]
     pub mode: AdaptiveRoutingMode,
 
-    /// Enable quality-of-service ranking that factors in response quality
-    /// (not just latency/errors) when scoring providers. Orthogonal to mode.
+    /// Stub: quality-of-service ranking toggle. Currently stored and displayed
+    /// in `/adaptive` status but does not affect provider scoring.
+    /// Reserved for future response-quality-based ranking.
     /// Default: false.
     #[serde(default)]
     pub qos_ranking: bool,
@@ -554,6 +555,7 @@ pub struct GatewayConfig {
     /// default from model_limits.json. Pipeline nodes can further override per-node.
     #[serde(default)]
     pub max_output_tokens: Option<u32>,
+
 }
 
 impl Default for GatewayConfig {

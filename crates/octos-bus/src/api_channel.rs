@@ -158,6 +158,10 @@ impl Channel for ApiChannel {
         Ok(())
     }
 
+    fn supports_edit(&self) -> bool {
+        true
+    }
+
     fn max_message_length(&self) -> usize {
         1_000_000 // No chunking needed for SSE
     }

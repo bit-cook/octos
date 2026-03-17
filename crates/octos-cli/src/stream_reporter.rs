@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use octos_agent::progress::{ProgressEvent, ProgressReporter};
 use octos_bus::{ActiveSessionStore, Channel};
 use octos_core::{OutboundMessage, SessionKey};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, warn};
 
 /// Events forwarded from the synchronous reporter to the async forwarder.
@@ -108,12 +108,12 @@ pub struct StreamResult {
 /// the proxy → pending buffer path and can be flushed on session switch.
 async fn is_session_active(
     session_key: &SessionKey,
-    active_sessions: &Mutex<ActiveSessionStore>,
+    active_sessions: &RwLock<ActiveSessionStore>,
 ) -> bool {
     let my_topic = session_key.topic().unwrap_or("");
     let base_key = session_key.base_key();
     let active_topic = active_sessions
-        .lock()
+        .read()
         .await
         .get_active_topic(base_key)
         .to_string();
@@ -136,7 +136,7 @@ pub async fn run_stream_forwarder(
     chat_id: String,
     cancel_status: Option<Arc<std::sync::atomic::AtomicBool>>,
     status_msg_id: Option<Arc<tokio::sync::Mutex<Option<String>>>>,
-    active_sessions: Arc<Mutex<ActiveSessionStore>>,
+    active_sessions: Arc<RwLock<ActiveSessionStore>>,
     session_key: SessionKey,
 ) -> StreamResult {
     let mut buffer = String::new();
@@ -210,32 +210,30 @@ pub async fn run_stream_forwarder(
                 }
             }
             StreamProgressEvent::ToolStarted { name } => {
-                // Flush text before tool status
-                if !no_edit_support
-                    && !buffer.is_empty()
-                    && is_session_active(&session_key, &active_sessions).await
-                {
-                    buffer.push_str(&format!("\n\n⚙ `{name}`..."));
-                    flush_to_channel(
-                        &channel,
-                        &chat_id,
-                        &buffer,
-                        &mut message_id,
-                        &mut no_edit_support,
-                    )
-                    .await;
-                    last_edit = Instant::now();
-                }
-            }
-            StreamProgressEvent::ToolCompleted { name, success } => {
-                let icon = if success { "✓" } else { "✗" };
-                // Update tool status in the existing message
-                if !no_edit_support && !buffer.is_empty() {
-                    // Replace the "⚙ `tool`..." with the result
-                    let pending = format!("⚙ `{name}`...");
-                    let completed = format!("{icon} `{name}`");
-                    if buffer.contains(&pending) {
-                        buffer = buffer.replace(&pending, &completed);
+                if !no_edit_support {
+                    // Cancel status indicator on first tool event too
+                    if first_chunk {
+                        first_chunk = false;
+                        if let Some(ref cancel) = cancel_status {
+                            cancel.store(true, std::sync::atomic::Ordering::Release);
+                        }
+                        if is_session_active(&session_key, &active_sessions).await {
+                            if let Some(ref msg_id_lock) = status_msg_id {
+                                let mid = msg_id_lock.lock().await.take();
+                                if let Some(ref mid) = mid {
+                                    let _ = channel.delete_message(&chat_id, mid).await;
+                                }
+                            }
+                        }
+                    }
+
+                    // Strip think tags from accumulated text before appending tool status
+                    let visible = strip_think_from_buffer(&buffer);
+                    buffer = visible;
+                    if buffer.is_empty() {
+                        buffer.push_str(&format!("⚙ `{name}`..."));
+                    } else {
+                        buffer.push_str(&format!("\n\n⚙ `{name}`..."));
                     }
                     if is_session_active(&session_key, &active_sessions).await {
                         flush_to_channel(
@@ -250,9 +248,39 @@ pub async fn run_stream_forwarder(
                     }
                 }
             }
+            StreamProgressEvent::ToolCompleted { name, success } => {
+                let icon = if success { "✓" } else { "✗" };
+                if !no_edit_support {
+                    // Replace the "⚙ `tool`..." with the result
+                    let pending = format!("⚙ `{name}`...");
+                    let completed = format!("{icon} `{name}`");
+                    if buffer.contains(&pending) {
+                        buffer = buffer.replace(&pending, &completed);
+                    } else {
+                        // Replace progress line for this tool
+                        let prev_prefix = format!("⚙ `{name}`:");
+                        if let Some(pos) = buffer.rfind(&prev_prefix) {
+                            let end = buffer[pos..].find('\n').map_or(buffer.len(), |i| pos + i);
+                            buffer.replace_range(pos..end, &completed);
+                        }
+                    }
+                    if !buffer.is_empty()
+                        && is_session_active(&session_key, &active_sessions).await
+                    {
+                        flush_to_channel(
+                            &channel,
+                            &chat_id,
+                            &buffer,
+                            &mut message_id,
+                            &mut no_edit_support,
+                        )
+                        .await;
+                        last_edit = Instant::now();
+                    }
+                }
+            }
             StreamProgressEvent::ToolProgress { name, message } => {
-                // Update the tool status line with the progress message
-                if !buffer.is_empty() {
+                if !no_edit_support {
                     let pending = format!("⚙ `{name}`...");
                     let progress = format!("⚙ `{name}`: {message}");
                     if buffer.contains(&pending) {
@@ -261,11 +289,16 @@ pub async fn run_stream_forwarder(
                         // Replace previous progress line for this tool
                         let prev_prefix = format!("⚙ `{name}`:");
                         if let Some(pos) = buffer.rfind(&prev_prefix) {
-                            let end = buffer[pos..].find('\n').map_or(buffer.len(), |i| pos + i);
+                            let end =
+                                buffer[pos..].find('\n').map_or(buffer.len(), |i| pos + i);
                             buffer.replace_range(pos..end, &progress);
+                        } else if buffer.is_empty() {
+                            // No prior ToolStarted — initialize buffer with progress
+                            buffer.push_str(&progress);
                         }
                     }
-                    if last_edit.elapsed() >= EDIT_THROTTLE
+                    if !buffer.is_empty()
+                        && last_edit.elapsed() >= EDIT_THROTTLE
                         && is_session_active(&session_key, &active_sessions).await
                     {
                         flush_to_channel(

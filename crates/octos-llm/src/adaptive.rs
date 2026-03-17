@@ -93,10 +93,12 @@ impl LatencySamples {
         if self.len == 0 {
             return 0;
         }
-        let mut sorted: Vec<u64> = self.buf[..self.len].to_vec();
-        sorted.sort_unstable();
+        // Stack-allocated copy avoids per-call heap allocation.
+        let mut sorted = self.buf;
+        let slice = &mut sorted[..self.len];
+        slice.sort_unstable();
         let idx = ((self.len as f64) * 0.95).ceil() as usize;
-        sorted[idx.min(self.len) - 1]
+        slice[idx.min(self.len) - 1]
     }
 }
 
@@ -401,6 +403,10 @@ impl AdaptiveRouter {
     }
 
     /// Toggle QoS quality ranking at runtime (orthogonal to mode).
+    ///
+    /// NOTE: Currently a stub — the flag is stored and reported in status but
+    /// does not yet affect scoring. A future iteration could factor response
+    /// quality (e.g. user thumbs-up/down) into the provider score.
     pub fn set_qos_ranking(&self, enabled: bool) {
         self.qos_ranking.store(enabled, Ordering::Relaxed);
         info!(enabled, "QoS quality ranking toggled");

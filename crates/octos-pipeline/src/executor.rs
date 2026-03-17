@@ -111,6 +111,24 @@ fn report_progress(message: &str) {
     }
 }
 
+/// Stream intermediate node content so channels with edit support (API/SSE,
+/// Telegram, etc.) can show progressive results instead of waiting for the
+/// entire pipeline to finish.
+fn stream_node_content(content: &str, label: &str) {
+    if content.is_empty() {
+        return;
+    }
+    if let Ok(ctx) = TOOL_CTX.try_with(|c| c.clone()) {
+        // Send as StreamChunk — the stream_forwarder accumulates these
+        // in its buffer and flushes to the channel every ~1 s.
+        let header = format!("\n\n## {label}\n\n");
+        ctx.reporter
+            .report(ProgressEvent::StreamChunk { text: header, iteration: 0 });
+        ctx.reporter
+            .report(ProgressEvent::StreamChunk { text: content.to_string(), iteration: 0 });
+    }
+}
+
 /// Resolve an LLM provider from a model key using an optional router.
 fn resolve_provider(
     default: &Arc<dyn LlmProvider>,
@@ -545,6 +563,10 @@ impl PipelineExecutor {
                         report_progress(&format!(
                             "{par_node_label}: '{par_label}' done ({n}/{total_targets}, {secs}s)"
                         ));
+                        // Stream parallel worker output as it completes
+                        if let Ok(ref outcome) = result {
+                            stream_node_content(&outcome.content, &par_label);
+                        }
                         (tid, target_with_prompt, start.elapsed(), result)
                     });
                 }
@@ -814,6 +836,10 @@ impl PipelineExecutor {
                         report_progress(&format!(
                             "{dp_label}: '{worker_label}' done ({n}/{total_workers}, {secs}s)"
                         ));
+                        // Stream dynamic-parallel worker output as it completes
+                        if let Ok(ref outcome) = result {
+                            stream_node_content(&outcome.content, &worker_label);
+                        }
                         (task_id, synth_node, start.elapsed(), result)
                     });
                 }
@@ -964,6 +990,9 @@ impl PipelineExecutor {
                 "{seq_label}: done ({:.0}s)",
                 duration_ms as f64 / 1000.0
             ));
+
+            // Stream node output so clients see intermediate results
+            stream_node_content(&outcome.content, seq_label);
 
             info!(
                 node = %node.id,
