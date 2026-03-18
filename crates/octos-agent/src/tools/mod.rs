@@ -460,7 +460,7 @@ pub use activate_tools::ActivateToolsTool;
 pub use browser::BrowserTool;
 pub use tool_config::{ConfigureToolTool, ToolConfigStore};
 pub use deep_research_v2::DeepResearchV2Tool;
-pub use web_server::{ProfileWebServer, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
+pub use web_server::{ProfileWebServer, WebPublishTool, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
 
 #[cfg(feature = "git")]
 pub use git::GitTool;

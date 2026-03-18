@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use octos_agent::tools::{MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
+use octos_agent::tools::{MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry, WebPublishTool, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
 use octos_agent::{Agent, AgentConfig, HookContext, HookExecutor, TokenTracker, ProfileWebServer};
 use octos_bus::{ActiveSessionStore, SessionHandle, SessionManager};
 use octos_core::AgentId;
@@ -461,6 +461,7 @@ impl ActorFactory {
         // Web server tools (per-profile)
         if let Some(ref web_server) = self.web_server {
             tools.register(WebServeTool::new(web_server.clone()));
+            tools.register(WebPublishTool::new(web_server.clone(), &user_workspace));
             tools.register(TunnelStartTool::new(web_server.clone()));
             tools.register(TunnelStopTool::new(web_server.clone()));
             tools.register(WebStatusTool::new(web_server.clone()));

@@ -840,6 +840,185 @@ impl Tool for WebStatusTool {
     }
 }
 
+/// Publish a file to web server - copy to www/ and serve it
+pub struct WebPublishTool {
+    web_server: Arc<ProfileWebServer>,
+    cwd: PathBuf,
+}
+
+impl WebPublishTool {
+    pub fn new(web_server: Arc<ProfileWebServer>, cwd: impl Into<PathBuf>) -> Self {
+        Self {
+            web_server,
+            cwd: cwd.into(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct WebPublishInput {
+    /// Source file path (relative to working directory)
+    source_file: String,
+    /// Target subdirectory under www/ (e.g., "share" or "report-2024q3")
+    /// If not specified, uses the source filename
+    #[serde(default)]
+    target_dir: String,
+    /// Whether to restart the server if already running
+    #[serde(default = "default_true")]
+    persistent: bool,
+}
+
+#[async_trait]
+impl Tool for WebPublishTool {
+    fn name(&self) -> &str {
+        "web_publish"
+    }
+
+    fn description(&self) -> &str {
+        "Publish a file to a web server for easy viewing/downloading. \
+         Copies the file to the profile's www/ folder and starts a local HTTP server. \
+         Returns a local URL that can be shared or used with tunnel_start for public access."
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "source_file": {
+                    "type": "string",
+                    "description": "Path to the file to publish (relative to working directory)"
+                },
+                "target_dir": {
+                    "type": "string",
+                    "description": "Subdirectory under www/ to publish to. Defaults to the source filename (without extension)",
+                    "default": ""
+                },
+                "persistent": {
+                    "type": "boolean",
+                    "description": "Whether to keep the server running after restart. Default: true",
+                    "default": true
+                }
+            },
+            "required": ["source_file"]
+        })
+    }
+
+    async fn execute(&self, args: &serde_json::Value) -> Result<ToolResult> {
+        let input: WebPublishInput = match serde_json::from_value(args.clone()) {
+            Ok(i) => i,
+            Err(e) => {
+                return Ok(ToolResult {
+                    output: format!("Invalid input: {}", e),
+                    success: false,
+                    ..Default::default()
+                });
+            }
+        };
+
+        // Validate source file path
+        let source_path = self.cwd.join(&input.source_file);
+        if !source_path.exists() {
+            return Ok(ToolResult {
+                output: format!("Source file not found: {}", input.source_file),
+                success: false,
+                ..Default::default()
+            });
+        }
+        if !source_path.is_file() {
+            return Ok(ToolResult {
+                output: format!("Source path is not a file: {}", input.source_file),
+                success: false,
+                ..Default::default()
+            });
+        }
+
+        // Determine target directory
+        let target_dir = if input.target_dir.is_empty() {
+            // Use filename without extension as default directory
+            source_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("share")
+                .to_string()
+        } else {
+            input.target_dir
+        };
+
+        // Validate target_dir (no .. or /)
+        if target_dir.contains("..") || target_dir.starts_with('/') {
+            return Ok(ToolResult {
+                output: "Invalid target_dir: cannot contain '..' or start with '/'".to_string(),
+                success: false,
+                ..Default::default()
+            });
+        }
+
+        // Get www directory and target path
+        let www_dir = self.web_server.www_dir();
+        let target_path = www_dir.join(&target_dir);
+        let target_file = target_path.join(source_path.file_name().unwrap_or("file".as_ref()));
+
+        // Copy file to www directory
+        if let Err(e) = tokio::fs::create_dir_all(&target_path).await {
+            return Ok(ToolResult {
+                output: format!("Failed to create directory: {}", e),
+                success: false,
+                ..Default::default()
+            });
+        }
+
+        match tokio::fs::copy(&source_path, &target_file).await {
+            Ok(bytes) => {
+                debug!(bytes = bytes, "Copied file to www directory");
+            }
+            Err(e) => {
+                return Ok(ToolResult {
+                    output: format!("Failed to copy file: {}", e),
+                    success: false,
+                    ..Default::default()
+                });
+            }
+        }
+
+        // Start or get existing web server for this directory
+        let info = match self.web_server.serve(&target_dir, input.persistent).await {
+            Ok(info) => info,
+            Err(e) => {
+                return Ok(ToolResult {
+                    output: format!("Failed to start web server: {}", e),
+                    success: false,
+                    ..Default::default()
+                });
+            }
+        };
+
+        let filename = source_path.file_name().unwrap_or("file".as_ref()).to_string_lossy();
+        let file_url = format!("{}/{}", info.local_url, filename);
+
+        let output = format!(
+            "✅ File published successfully!\n\n\
+             📄 File: {}\n\
+             📂 Published to: {}/{}\n\n\
+             🔗 Access URLs:\n\
+             • Direct: {}\n\
+             • Browse: {}\n\n\
+             To expose publicly: tunnel_start(port={})",
+            input.source_file,
+            target_dir,
+            filename,
+            file_url,
+            info.local_url,
+            info.port
+        );
+
+        Ok(ToolResult {
+            output,
+            success: true,
+            ..Default::default()
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

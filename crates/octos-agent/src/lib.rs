@@ -55,7 +55,7 @@ pub use tools::{
     ActivateToolsTool, BrowserTool, ConfigureToolTool, DeepResearchV2Tool, DeepSearchTool, DiffEditTool, EditFileTool,
     GlobTool, GrepTool, ListDirTool, ManageSkillsTool, MessageTool, ProfileWebServer, ReadFileTool, RecallMemoryTool,
     SaveMemoryTool, SendFileTool, ShellTool, SpawnTool, SynthesizeResearchTool, TakePhotoTool,
-    Tool, ToolConfigStore, ToolPolicy, ToolRegistry, ToolResult, WebFetchTool, WebSearchTool, WebServeTool,
+    Tool, ToolConfigStore, ToolPolicy, ToolRegistry, ToolResult, WebFetchTool, WebPublishTool, WebSearchTool, WebServeTool,
     WriteFileTool,
     admin::{AdminApiContext, register_admin_api_tools},
 };
