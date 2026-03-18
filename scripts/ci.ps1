@@ -46,7 +46,7 @@ if (-not $Quick) {
 if ($Subsystem) {
     Section "Subsystem Tests: $Subsystem"
     $crate = "octos-$Subsystem"
-    # Legacy crate names use crew- prefix for some subsystems
+    # All crates use octos- prefix
     $testOut = cargo test -p $crate @TestThreads 2>&1
     if ($LASTEXITCODE -eq 0) {
         $passed = ($testOut | Select-String "^test result:" | ForEach-Object {
