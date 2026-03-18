@@ -25,10 +25,13 @@ pub mod prompt_layer;
 pub mod provider_tools;
 pub mod sandbox;
 mod sanitize;
+pub mod search;
 pub mod session;
 pub mod skills;
+pub mod source_registry;
 pub mod steering;
 pub mod tools;
+pub mod tunnel;
 pub mod turn;
 
 pub use agent::{
@@ -49,10 +52,10 @@ pub use session::{SessionLimits, SessionState, SessionStateHandle, SessionUsage}
 pub use skills::{SkillInfo, SkillsLoader};
 pub use steering::{SteeringMessage, SteeringReceiver, SteeringSender};
 pub use tools::{
-    ActivateToolsTool, BrowserTool, ConfigureToolTool, DeepSearchTool, DiffEditTool, EditFileTool,
-    GlobTool, GrepTool, ListDirTool, ManageSkillsTool, MessageTool, ReadFileTool, RecallMemoryTool,
+    ActivateToolsTool, BrowserTool, ConfigureToolTool, DeepResearchV2Tool, DeepSearchTool, DiffEditTool, EditFileTool,
+    GlobTool, GrepTool, ListDirTool, ManageSkillsTool, MessageTool, ProfileWebServer, ReadFileTool, RecallMemoryTool,
     SaveMemoryTool, SendFileTool, ShellTool, SpawnTool, SynthesizeResearchTool, TakePhotoTool,
-    Tool, ToolConfigStore, ToolPolicy, ToolRegistry, ToolResult, WebFetchTool, WebSearchTool,
+    Tool, ToolConfigStore, ToolPolicy, ToolRegistry, ToolResult, WebFetchTool, WebSearchTool, WebServeTool,
     WriteFileTool,
     admin::{AdminApiContext, register_admin_api_tools},
 };

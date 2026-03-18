@@ -1,0 +1,376 @@
+# Source Registry Configuration
+# 搜索源注册表 - 主题到搜索引擎/语言/门户的映射
+
+[meta]
+version = "1.0.0"
+description = "Deep Research V2 Source Registry"
+
+# -----------------------------------------------------------------------------
+# 搜索引擎配置
+# -----------------------------------------------------------------------------
+
+[[search_engine]]
+name = "serper"
+display_name = "Serper.dev"
+backend_type = "serper_api"
+requires_api_key = true
+api_key_env = "SERPER_API_KEY"
+docs_url = "https://serper.dev/docs"
+supports = ["web", "news", "images", "places"]
+
+[[search_engine]]
+name = "google_cse"
+display_name = "Google Custom Search"
+backend_type = "google_cse"
+requires_api_key = true
+api_key_env = "GOOGLE_CSE_API_KEY"
+extra_env = ["GOOGLE_CSE_ID"]
+docs_url = "https://developers.google.com/custom-search"
+note = "CSE closing to new customers Jan 2027"
+supports = ["web"]
+
+[[search_engine]]
+name = "baidu"
+display_name = "百度搜索"
+backend_type = "baidu_scrape"
+requires_api_key = false
+note = "HTML scraping, may require proxy in some regions"
+supports = ["web"]
+
+[[search_engine]]
+name = "brave"
+display_name = "Brave Search"
+backend_type = "brave_api"
+requires_api_key = true
+api_key_env = "BRAVE_API_KEY"
+free_tier = "2000/month"
+supports = ["web", "news"]
+
+[[search_engine]]
+name = "perplexity"
+display_name = "Perplexity Sonar"
+backend_type = "perplexity_api"
+requires_api_key = true
+api_key_env = "PERPLEXITY_API_KEY"
+note = "AI meta-search for verification"
+supports = ["web"]
+
+[[search_engine]]
+name = "duckduckgo"
+display_name = "DuckDuckGo"
+backend_type = "ddg_scrape"
+requires_api_key = false
+note = "Default fallback, HTML scraping"
+supports = ["web", "news"]
+
+# -----------------------------------------------------------------------------
+# 主题源配置
+# -----------------------------------------------------------------------------
+
+# 科技/AI 主题
+[[topic_source]]
+topic = "technology"
+keywords = ["AI", "artificial intelligence", "machine learning", "tech", "software", "芯片", "半导体"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.search_priority]]
+engine = "perplexity"
+priority = 2
+languages = ["en"]
+use_for = "verification"
+
+[[topic_source.portals]]
+name = "arXiv"
+url_pattern = "https://arxiv.org/search/?query={query}"
+content_type = "academic"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "GitHub"
+url_pattern = "https://github.com/search?q={query}"
+content_type = "code"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "TechCrunch"
+url_pattern = "https://techcrunch.com/?s={query}"
+content_type = "news"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "The Verge"
+url_pattern = "https://www.theverge.com/search?q={query}"
+content_type = "news"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "机器之心"
+url_pattern = "https://www.jiqizhixin.com/search?q={query}"
+content_type = "news"
+language = "zh"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "品玩"
+url_pattern = "https://www.pingwest.com/?s={query}"
+content_type = "news"
+language = "zh"
+reliability = "medium"
+
+# 金融/商业主题
+[[topic_source]]
+topic = "finance"
+keywords = ["finance", "stock", "market", "investment", "经济", "股市", "投资", "金融"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.portals]]
+name = "Bloomberg"
+url_pattern = "https://www.bloomberg.com/search?query={query}"
+content_type = "news"
+reliability = "high"
+paywall = true
+
+[[topic_source.portals]]
+name = "Reuters"
+url_pattern = "https://www.reuters.com/search/news?blob={query}"
+content_type = "news"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "Financial Times"
+url_pattern = "https://www.ft.com/search?q={query}"
+content_type = "news"
+reliability = "high"
+paywall = true
+
+[[topic_source.portals]]
+name = "WSJ"
+url_pattern = "https://www.wsj.com/search?query={query}"
+content_type = "news"
+reliability = "high"
+paywall = true
+
+[[topic_source.portals]]
+name = "东方财富"
+url_pattern = "https://so.eastmoney.com/web/s?keyword={query}"
+content_type = "data"
+language = "zh"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "雪球"
+url_pattern = "https://xueqiu.com/k?q={query}"
+content_type = "community"
+language = "zh"
+reliability = "low"
+
+# 医疗/健康主题
+[[topic_source]]
+topic = "healthcare"
+keywords = ["health", "medical", "drug", "vaccine", "医疗", "健康", "药物", "疫苗"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.portals]]
+name = "PubMed"
+url_pattern = "https://pubmed.ncbi.nlm.nih.gov/?term={query}"
+content_type = "academic"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "WHO"
+url_pattern = "https://www.who.int/search?q={query}"
+content_type = "official"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "FDA"
+url_pattern = "https://www.fda.gov/search?s={query}"
+content_type = "official"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "丁香园"
+url_pattern = "https://search.dxy.cn/?query={query}"
+content_type = "professional"
+language = "zh"
+reliability = "high"
+
+# 法律/政策主题
+[[topic_source]]
+topic = "legal"
+keywords = ["law", "policy", "regulation", "legal", "法律", "政策", "法规"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.portals]]
+name = "GovInfo"
+url_pattern = "https://www.govinfo.gov/app/search/{query}"
+content_type = "official"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "Congress.gov"
+url_pattern = "https://www.congress.gov/search?q={query}"
+content_type = "official"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "中国政府网"
+url_pattern = "http://www.gov.cn/zhengce/search.htm?q={query}"
+content_type = "official"
+language = "zh"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "国家法律法规数据库"
+url_pattern = "https://flk.npc.gov.cn/"
+content_type = "official"
+language = "zh"
+reliability = "high"
+note = "Manual search required"
+
+# 学术/教育主题
+[[topic_source]]
+topic = "academic"
+keywords = ["research", "academic", "university", "study", "学术", "研究", "大学"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.search_priority]]
+engine = "perplexity"
+priority = 2
+languages = ["en"]
+use_for = "deep_dive"
+
+[[topic_source.portals]]
+name = "Google Scholar"
+url_pattern = "https://scholar.google.com/scholar?q={query}"
+content_type = "academic"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "arXiv"
+url_pattern = "https://arxiv.org/search/?query={query}"
+content_type = "academic"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "知网"
+url_pattern = "https://www.cnki.net/"
+content_type = "academic"
+language = "zh"
+reliability = "high"
+paywall = true
+
+# 社交媒体/舆论
+[[topic_source]]
+topic = "social_media"
+keywords = ["social", "twitter", "reddit", "opinion", "舆论", "社交媒体"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+note = "Use site: operator for social platforms"
+
+[[topic_source.portals]]
+name = "X/Twitter via Serper"
+url_pattern = "https://google.com/search?q={query}+site:x.com"
+content_type = "social"
+reliability = "low"
+note = "Proxy via Google search"
+
+[[topic_source.portals]]
+name = "Reddit via Serper"
+url_pattern = "https://google.com/search?q={query}+site:reddit.com"
+content_type = "social"
+reliability = "low"
+
+[[topic_source.portals]]
+name = "LinkedIn via Serper"
+url_pattern = "https://google.com/search?q={query}+site:linkedin.com"
+content_type = "social"
+reliability = "medium"
+
+# 新闻/时事
+[[topic_source]]
+topic = "news"
+keywords = ["news", "current events", "breaking", "新闻", "时事"]
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.portals]]
+name = "Reuters"
+url_pattern = "https://www.reuters.com/search/news?blob={query}"
+content_type = "news"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "AP News"
+url_pattern = "https://apnews.com/search?q={query}"
+content_type = "news"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "新华网"
+url_pattern = "http://www.news.cn/search/web?q={query}"
+content_type = "news"
+language = "zh"
+reliability = "high"
+
+[[topic_source.portals]]
+name = "澎湃新闻"
+url_pattern = "https://www.thepaper.cn/searchResult.jsp?searchWord={query}"
+content_type = "news"
+language = "zh"
+reliability = "medium"
+
+# 默认/通用主题
+[[topic_source]]
+topic = "general"
+keywords = []
+match_all = true  # 默认 fallback
+
+[[topic_source.search_priority]]
+engine = "serper"
+priority = 1
+languages = ["en", "zh"]
+
+[[topic_source.search_priority]]
+engine = "duckduckgo"
+priority = 2
+languages = ["en"]
+
+[[topic_source.portals]]
+name = "Wikipedia"
+url_pattern = "https://en.wikipedia.org/wiki/Special:Search?search={query}"
+content_type = "encyclopedia"
+reliability = "medium"
+
+[[topic_source.portals]]
+name = "百度百科"
+url_pattern = "https://baike.baidu.com/search?word={query}"
+content_type = "encyclopedia"
+language = "zh"
+reliability = "low"

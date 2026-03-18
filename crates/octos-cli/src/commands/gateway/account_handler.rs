@@ -30,7 +30,7 @@ pub async fn handle_account_command(
     let store = match profile_store {
         Some(s) => s,
         None => {
-            return "Account management is not available (no octos-home configured).".to_string();
+            return "Account management is not available (no crew-home configured).".to_string();
         }
     };
 
@@ -90,7 +90,7 @@ pub async fn handle_account_command(
                 crate::profiles::GatewaySettings::default(),
             ) {
                 Ok(sub) => format!(
-                    "Created sub-account: {}\nAdd channels via dashboard or CLI:\n  octos account create --profile {} {} --telegram-token <token>",
+                    "Created sub-account: {}\nAdd channels via dashboard or CLI:\n  crew account create --profile {} {} --telegram-token <token>",
                     sub.id, parent_id, name
                 ),
                 Err(e) => format!("Error: {e}"),

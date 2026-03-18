@@ -42,6 +42,12 @@ base64 = { workspace = true }
 chromiumoxide = { workspace = true }
 tempfile = { workspace = true }
 lettre = { workspace = true }
+scraper = "0.22"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "compression-gzip", "compression-deflate"] }
+rand = "0.8"
+urlencoding = "2.1"
+toml = "0.8"
 
 [features]
 git = ["dep:gix", "dep:similar"]

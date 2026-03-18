@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use octos_agent::tools::{MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry};
-use octos_agent::{Agent, AgentConfig, HookContext, HookExecutor, TokenTracker};
+use octos_agent::tools::{MessageTool, SendFileTool, SpawnTool, ToolPolicy, ToolRegistry, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
+use octos_agent::{Agent, AgentConfig, HookContext, HookExecutor, TokenTracker, ProfileWebServer};
 use octos_bus::{ActiveSessionStore, SessionHandle, SessionManager};
 use octos_core::AgentId;
 use octos_core::{InboundMessage, Message, MessageRole, OutboundMessage, SessionKey};
@@ -305,6 +305,8 @@ pub struct ActorFactory {
     /// Memory store for saving long-form outputs (research reports) to the
     /// memory bank so only a summary is injected into session context.
     pub memory_store: Option<Arc<MemoryStore>>,
+    /// Profile web server for serving files and tunnels.
+    pub web_server: Option<Arc<ProfileWebServer>>,
 }
 
 /// Trait for creating per-session ToolRegistry instances.
@@ -456,6 +458,14 @@ impl ActorFactory {
             tools.register_arc(pt);
         }
 
+        // Web server tools (per-profile)
+        if let Some(ref web_server) = self.web_server {
+            tools.register(WebServeTool::new(web_server.clone()));
+            tools.register(TunnelStartTool::new(web_server.clone()));
+            tools.register(TunnelStopTool::new(web_server.clone()));
+            tools.register(WebStatusTool::new(web_server.clone()));
+        }
+
         // Build per-session Agent
         let agent_id = AgentId::new(format!("session-{}", session_key));
         let has_deferred = tools.has_deferred();
@@ -588,15 +598,6 @@ async fn outbound_forwarder(
                 buf.push(msg);
             } else {
                 warn!(session = %session_key, "pending buffer full, dropping message");
-                // Replace the last buffered message with a truncation notice so the
-                // user sees feedback when they switch to this session.
-                if let Some(last) = buf.last_mut() {
-                    last.content = format!(
-                        "{}\n\n⚠️ Buffer full ({MAX_PENDING_PER_SESSION} messages). \
-                         Some responses were dropped. Switch to this session to continue.",
-                        last.content,
-                    );
-                }
             }
             drop(pending); // release lock before sending notification
 
@@ -1917,7 +1918,10 @@ impl SessionActor {
 
             // Wait for stream forwarder to finish flushing
             let stream_result = if let Some(handle) = stream_forwarder {
-                handle.await.ok()
+                match handle.await {
+                    Ok(sr) => Some(sr),
+                    Err(_) => None,
+                }
             } else {
                 None
             };
@@ -1963,7 +1967,7 @@ impl SessionActor {
                     let already_streamed = session_active
                         && stream_result
                             .as_ref()
-                            .is_some_and(|sr| sr.message_id.is_some());
+                            .map_or(false, |sr| sr.message_id.is_some());
 
                     if !reply.trim().is_empty() && !already_streamed {
                         let _ = out_tx
@@ -2446,7 +2450,7 @@ mod tests {
         JoinHandle<()>,
         Arc<Mutex<SessionManager>>,
     ) {
-        let session_mgr = Arc::new(Mutex::new(
+        let session_mgr = Arc::new(RwLock::new(
             SessionManager::open(&dir.path().join("sessions")).unwrap(),
         ));
         let memory = Arc::new(EpisodeStore::open(dir.path().join("memory")).await.unwrap());
@@ -2498,7 +2502,9 @@ mod tests {
             adaptive_router,
             memory_store: None,
             active_overflow_tasks: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            active_sessions: Arc::new(RwLock::new(ActiveSessionStore::open(dir.path()).unwrap())),
+            active_sessions: Arc::new(RwLock::new(
+                ActiveSessionStore::open(dir.path()).unwrap(),
+            )),
         };
 
         let handle = tokio::spawn(actor.run());
@@ -2520,7 +2526,7 @@ mod tests {
         JoinHandle<()>,
         Arc<Mutex<SessionManager>>,
     ) {
-        let session_mgr = Arc::new(Mutex::new(
+        let session_mgr = Arc::new(RwLock::new(
             SessionManager::open(&dir.path().join("sessions")).unwrap(),
         ));
         let memory = Arc::new(EpisodeStore::open(dir.path().join("memory")).await.unwrap());
@@ -2581,7 +2587,9 @@ mod tests {
             adaptive_router: Some(router),
             memory_store: None,
             active_overflow_tasks: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            active_sessions: Arc::new(RwLock::new(ActiveSessionStore::open(dir.path()).unwrap())),
+            active_sessions: Arc::new(RwLock::new(
+                ActiveSessionStore::open(dir.path()).unwrap(),
+            )),
         };
 
         let handle = tokio::spawn(actor.run());

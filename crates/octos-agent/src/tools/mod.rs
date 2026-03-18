@@ -425,6 +425,10 @@ pub mod activate_tools;
 pub mod admin;
 pub mod browser;
 pub mod tool_config;
+pub mod deep_research_v2;
+pub mod web_server;
+
+pub mod research;
 
 #[cfg(feature = "git")]
 pub mod git;
@@ -455,6 +459,8 @@ pub use write_file::WriteFileTool;
 pub use activate_tools::ActivateToolsTool;
 pub use browser::BrowserTool;
 pub use tool_config::{ConfigureToolTool, ToolConfigStore};
+pub use deep_research_v2::DeepResearchV2Tool;
+pub use web_server::{ProfileWebServer, WebServeTool, TunnelStartTool, TunnelStopTool, WebStatusTool};
 
 #[cfg(feature = "git")]
 pub use git::GitTool;

@@ -13,18 +13,19 @@ use std::time::Duration;
 
 use clap::Args;
 use colored::Colorize;
-use eyre::{Result, WrapErr};
 use octos_agent::{AgentConfig, HookContext, HookExecutor, SkillsLoader, ToolRegistry};
 use octos_bus::{
     ActiveSessionStore, ChannelManager, CliChannel, CronService, HeartbeatService, SessionManager,
     create_bus, validate_topic_name,
 };
 use octos_core::{OutboundMessage, SessionKey};
+use octos_agent::ProfileWebServer;
 use octos_llm::{
     AdaptiveConfig, AdaptiveRouter, LlmProvider, ProviderChain, ProviderRouter, RetryProvider,
     SwappableProvider,
 };
 use octos_memory::{EpisodeStore, MemoryStore};
+use eyre::{Result, WrapErr};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tracing::{info, warn};
 
@@ -58,7 +59,7 @@ pub struct GatewayCommand {
     #[arg(short, long)]
     pub cwd: Option<PathBuf>,
 
-    /// Data directory for episodes, memory, sessions (defaults to $OCTOS_HOME or ~/.octos).
+    /// Data directory for episodes, memory, sessions (defaults to $CREW_HOME or ~/.crew).
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 
@@ -106,7 +107,7 @@ pub struct GatewayCommand {
     #[arg(long, hide = true)]
     pub parent_profile: Option<PathBuf>,
 
-    /// Octos home directory for ProfileStore access (used by managed gateways).
+    /// Crew home directory for ProfileStore access (used by managed gateways).
     #[arg(long, hide = true)]
     pub octos_home: Option<PathBuf>,
 }
@@ -127,7 +128,7 @@ impl GatewayCommand {
         // Use eprintln! for the startup banner so it reaches the server's stderr
         // reader immediately (stderr is unbuffered, unlike piped stdout).
         eprintln!("[gateway] starting");
-        println!("{}", "octos gateway".cyan().bold());
+        println!("{}", "crew gateway".cyan().bold());
         println!();
 
         let cwd = match self.cwd {
@@ -278,17 +279,17 @@ impl GatewayCommand {
         let swappable = Arc::new(SwappableProvider::new(llm));
         let llm: Arc<dyn LlmProvider> = swappable.clone();
 
-        // Resolve data directory (--data-dir > $OCTOS_HOME > ~/.octos)
+        // Resolve data directory (--data-dir > $CREW_HOME > ~/.crew)
         let data_dir = super::resolve_data_dir(self.data_dir)?;
 
         // Expose data_dir to skill binaries (e.g. mofa-fm voice storage)
         // SAFETY: called before spawning any threads; single-threaded at this point
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("OCTOS_DATA_DIR", &data_dir);
+            std::env::set_var("CREW_DATA_DIR", &data_dir);
         }
 
-        // Open ProfileStore for /account commands (if octos-home is available)
+        // Open ProfileStore for /account commands (if crew-home is available)
         let profile_store: Option<Arc<crate::profiles::ProfileStore>> =
             if let Some(ref octos_home) = self.octos_home {
                 crate::profiles::ProfileStore::open(octos_home)
@@ -298,16 +299,16 @@ impl GatewayCommand {
                 None
             };
 
-        // Export OCTOS_HOME and OCTOS_PROFILE_ID so plugin tools (e.g. account-manager)
+        // Export CREW_HOME and CREW_PROFILE_ID so plugin tools (e.g. account-manager)
         // can access the profile store and know which profile is running.
         // SAFETY: gateway is single-threaded at this point (before tokio tasks spawn).
         #[allow(unsafe_code)]
         unsafe {
             if let Some(ref octos_home) = self.octos_home {
-                std::env::set_var("OCTOS_HOME", octos_home);
+                std::env::set_var("CREW_HOME", octos_home);
             }
             if let Some(ref pid) = profile_id {
-                std::env::set_var("OCTOS_PROFILE_ID", pid);
+                std::env::set_var("CREW_PROFILE_ID", pid);
             }
         }
 
@@ -351,13 +352,13 @@ impl GatewayCommand {
         eprintln!("[gateway] memory store opened");
 
         // Derive project_dir from octos_home (when launched by process_manager)
-        // or fall back to cwd/.octos (standalone octos gateway / octos chat mode).
+        // or fall back to cwd/.crew (standalone crew gateway / crew chat mode).
         // This is decoupled from cwd so that narrowing cwd to data_dir for
         // per-profile file isolation doesn't break access to shared skills/configs.
         let project_dir = if let Some(ref octos_home) = self.octos_home {
             octos_home.clone()
         } else {
-            cwd.join(".octos")
+            cwd.join(".crew")
         };
 
         // Bootstrap bundled app-skills and platform skills into layered dirs
@@ -434,8 +435,8 @@ impl GatewayCommand {
         let mut skills_loader = skills_loader;
         skills_loader
             .add_skills_path(project_dir.join(octos_agent::bootstrap::BUNDLED_APP_SKILLS_DIR));
-        // Extra skills dirs from OCTOS_SKILLS_PATH env var
-        if let Ok(extra) = std::env::var("OCTOS_SKILLS_PATH") {
+        // Extra skills dirs from CREW_SKILLS_PATH env var
+        if let Ok(extra) = std::env::var("CREW_SKILLS_PATH") {
             for p in extra.split(':') {
                 let p = p.trim();
                 if !p.is_empty() {
@@ -498,10 +499,10 @@ impl GatewayCommand {
             // Admin mode: register only admin API tools
             tools = ToolRegistry::new();
 
-            // Register admin API tools (calls REST API on octos serve)
-            let serve_url = std::env::var("OCTOS_SERVE_URL")
+            // Register admin API tools (calls REST API on crew serve)
+            let serve_url = std::env::var("CREW_SERVE_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-            let admin_token = std::env::var("OCTOS_ADMIN_TOKEN").unwrap_or_default();
+            let admin_token = std::env::var("CREW_ADMIN_TOKEN").unwrap_or_default();
             let admin_ctx = Arc::new(octos_agent::AdminApiContext {
                 http: reqwest::Client::new(),
                 serve_url,
@@ -521,7 +522,8 @@ impl GatewayCommand {
 
             // Load only admin-relevant plugins (not all bundled skills)
             let admin_skills: &[&str] = &["send-email", "account-manager"];
-            let bundled_dir = project_dir.join(octos_agent::bootstrap::BUNDLED_APP_SKILLS_DIR);
+            let bundled_dir = project_dir
+                .join(octos_agent::bootstrap::BUNDLED_APP_SKILLS_DIR);
             for skill_name in admin_skills {
                 let skill_dir = bundled_dir.join(skill_name);
                 if skill_dir.exists() {
@@ -541,7 +543,7 @@ impl GatewayCommand {
         } else {
             // Normal mode: full tool registration
             // Populate read_allow_paths so the shell sandbox restricts reads to
-            // this profile's data_dir (via cwd) + shared octos home (project_dir).
+            // this profile's data_dir (via cwd) + shared crew home (project_dir).
             // Without this, macOS SBPL defaults to (allow file-read*) which lets
             // the shell read any file on disk, including other profiles' data.
             if sandbox_config.read_allow_paths.is_empty() {
@@ -701,8 +703,11 @@ impl GatewayCommand {
                         ) {
                             Ok(p) => {
                                 // Build a unique key from model name
-                                let base_key =
-                                    fb.model.as_deref().unwrap_or(&fb.provider).to_string();
+                                let base_key = fb
+                                    .model
+                                    .as_deref()
+                                    .unwrap_or(&fb.provider)
+                                    .to_string();
                                 let count = key_counts.entry(base_key.clone()).or_insert(0);
                                 let key = if *count == 0 {
                                     base_key.clone()
@@ -734,7 +739,11 @@ impl GatewayCommand {
                     }
                 }
 
-                if registered > 0 { Some(router) } else { None }
+                if registered > 0 {
+                    Some(router)
+                } else {
+                    None
+                }
             };
 
             // Capture config for per-session SpawnTool and PipelineTool creation
@@ -936,6 +945,17 @@ impl GatewayCommand {
         let pending_messages: crate::session_actor::PendingMessages =
             Arc::new(Mutex::new(std::collections::HashMap::new()));
 
+        // Create profile web server for serving files and tunnels
+        let web_server = Arc::new(ProfileWebServer::new(
+            profile_id.clone().unwrap_or_else(|| "default".to_string()),
+            data_dir.clone(),
+        ));
+
+        // Restore any persisted web servers from previous run
+        if let Err(e) = web_server.restore().await {
+            warn!("Failed to restore web servers: {e}");
+        }
+
         // Build ActorFactory with all shared resources
         let actor_factory = ActorFactory {
             agent_config,
@@ -967,6 +987,7 @@ impl GatewayCommand {
             queue_mode: gw_config.queue_mode,
             adaptive_router: adaptive_router_ref,
             memory_store: Some(memory_store.clone()),
+            web_server: Some(web_server),
         };
 
         // Start config watcher for hot-reload
@@ -1537,7 +1558,10 @@ impl GatewayCommand {
                         .unwrap_or_else(|e| warn!("switch_to failed: {e}"));
 
                     // Rebuild keyboard with updated active marker
-                    let entries = session_mgr.lock().await.list_user_sessions(&base_key_str);
+                    let entries = session_mgr
+                        .lock()
+                        .await
+                        .list_user_sessions(&base_key_str);
                     let keyboard = session_ui::build_session_keyboard(&entries, topic);
                     let text = session_ui::build_session_text(&entries, topic);
 
@@ -1557,8 +1581,11 @@ impl GatewayCommand {
                     info!(session = %label, "session switched via inline keyboard");
 
                     // Flush any buffered messages from the target session
-                    let target_key =
-                        SessionKey::with_topic(&inbound.channel, &inbound.chat_id, topic);
+                    let target_key = SessionKey::with_topic(
+                        &inbound.channel,
+                        &inbound.chat_id,
+                        topic,
+                    );
                     actor_registry.flush_pending(&target_key.to_string()).await;
                     continue;
                 }
@@ -1689,7 +1716,10 @@ impl GatewayCommand {
 
             // Handle /sessions command — list all sessions with inline keyboard
             if cmd == "/sessions" {
-                let entries = session_mgr.lock().await.list_user_sessions(&base_key_str);
+                let entries = session_mgr
+                    .lock()
+                    .await
+                    .list_user_sessions(&base_key_str);
                 let active_topic = active_sessions
                     .read()
                     .await
@@ -1979,7 +2009,7 @@ async fn transcribe_via_skill(
 /// Build environment variables to inject into plugin processes so skills can
 /// route API calls through the configured provider/gateway.
 ///
-/// Maps octos provider config → env vars that downstream skills understand:
+/// Maps crew-rs provider config → env vars that downstream skills understand:
 /// - `GEMINI_API_KEY`, `GEMINI_BASE_URL` — for Gemini-backed skills (mofa, etc.)
 /// - `DASHSCOPE_API_KEY` — for Dashscope/Qwen skills
 /// - `OPENAI_API_KEY`, `OPENAI_BASE_URL` — for OpenAI-compatible skills
