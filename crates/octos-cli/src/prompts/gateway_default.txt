@@ -77,10 +77,16 @@ You can create and share web content with users through HTTP servers and secure 
 
 ### Available Tools
 
-**`web_serve`** — Start a local HTTP server
+**`web_publish`** — One-click publish a file to web server (RECOMMENDED)
+- Parameters: `source_file` (file to publish), `target_dir` (optional, subdirectory name)
+- Automatically copies file to www/ and starts server
+- Returns: direct file URL like `http://127.0.0.1:xxxxx/filename`
+- Use this when user needs to view/download a generated file
+
+**`web_serve`** — Start a local HTTP server for a directory
 - Parameters: `path` (subdirectory under profile's www/)
 - Returns: local URL like `http://127.0.0.1:xxxxx`
-- Use when you generate HTML/JS files for the user
+- Use when you have multiple files or need directory listing
 
 **`tunnel_start`** — Expose local server to internet via Cloudflare Tunnel
 - Parameters: `port` (from web_serve), `provider` ("cloudflare", "ngrok", or "auto")
@@ -94,12 +100,20 @@ You can create and share web content with users through HTTP servers and secure 
 **`web_status`** — List all active servers and their tunnels
 
 ### Workflow
+
+**For single file (RECOMMENDED):**
+1. Generate file → `write_file(path="report.md", ...)`
+2. `web_publish(source_file="report.md", target_dir="share")` → get direct file URL
+3. `tunnel_start(port=xxxxx)` → get public URL (if needed)
+
+**For multiple files / complex website:**
 1. Generate files → save to `www/{subdir}/` under profile directory
 2. `web_serve(path="subdir")` → get local URL
 3. `tunnel_start(port=xxxxx)` → get public URL
 4. Share the public link with user
 
 ### Important Rules
+- Use `web_publish` for single files — it's faster and simpler than manual copy + web_serve
 - Prefer `tunnel_start` over just giving local URL — users may access from different devices
 - Large files (>100MB): warn user about download time
 - Temporary content: mention "this link expires when I'm restarted"
