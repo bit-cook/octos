@@ -1,0 +1,84 @@
+# Deep Research Skill - Cursor/Claude Context Rules
+
+When working with this skill, follow these conventions:
+
+## File Organization
+
+- `SKILL.md` - Main skill documentation and workflow
+- `config.toml` - Default configuration (can be overridden per-project)
+- `templates/*.md` - Prompt templates for different agents
+- `examples/*.md` - Example research sessions
+
+## Research Workflow
+
+1. **Entry** → Analyze query, determine strategy
+2. **Discovery** → web_search for initial links
+3. **Evaluate** → Score each link (relevance, authority, novelty)
+4. **Explore** → Dive into high-scoring links (web_fetch/browser)
+5. **Extract** → Pull facts, sources, contradictions, follow-ups
+6. **Loop** → Repeat until coverage target or stagnation
+7. **Synthesize** → Generate final report with citations
+
+## KnowledgeBase Format
+
+Always store extracted knowledge as JSON:
+
+```json
+{
+  "facts": [{"id", "claim", "quote", "confidence", "sources"}],
+  "sources": [{"id", "title", "url", "domain", "authority", "date"}],
+  "contradictions": [{"claim_a", "source_a", "claim_b", "source_b"}],
+  "exploration_log": [{"action", "url", "result"}]
+}
+```
+
+## Authority Scoring
+
+Auto-assign based on domain:
+- High (0.8-1.0): .gov, .edu, europa.eu, un.org, wikipedia.org
+- Medium (0.5-0.8): reuters, bloomberg, ft, nytimes, nature, ieee
+- Low (0.0-0.5): medium, substack, personal blogs
+
+## Iteration Rules
+
+- **Max depth**: 15 links per research session
+- **Max iterations**: 10 exploration loops
+- **Stagnation**: Stop after 3 consecutive iterations with no new facts
+- **Coverage target**: Continue until self-assessed coverage > 80%
+
+## Citation Format
+
+Every claim in final report must cite source:
+- Inline: `The Earth is round [1].`
+- Sources section: `[1] Title - URL (Authority: high, Date: 2026-01-15)`
+
+## HITL Triggers
+
+Pause and ask user when:
+- Contradiction between high-authority sources
+- Confidence score < 0.5 for key claims
+- Sensitive topic detected (legal, medical, political)
+- User explicitly requested review points
+
+## Memory Integration
+
+After research completion:
+1. Save summary to `.crew/episodes.jsonl`
+2. Key facts to crew-memory for future retrieval
+3. Cache search results for 24h
+
+## Tool Usage Priority
+
+1. `web_search` - Initial discovery only
+2. `web_fetch` - Get page content (fast, static)
+3. `browser_*` - Interactive browsing (when needed)
+4. `read_file/write_file` - KnowledgeBase persistence
+5. `message` - HITL
+
+## Never Do
+
+- ❌ Fabricate facts or sources
+- ❌ Skip citation for claims
+- ❌ Ignore contradictions
+- ❌ Trust single source for controversial claims
+- ❌ Exceed max depth without user approval

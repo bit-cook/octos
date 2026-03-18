@@ -1,0 +1,147 @@
+# MOFA Research 2.0 Configuration
+# Inspired by DeerFlow and mofa-research
+
+[research]
+# Research pipeline configuration
+name = "mofa-research-2.0"
+version = "2.0.0"
+
+[search]
+# Search method priority: tavily | google | auto
+# auto = try tavily first, fallback to google
+primary_method = "auto"
+
+# Time-aware search configuration (DeerFlow-inspired)
+temporal_awareness = "strict"  # strict | lenient | off
+default_time_window = "30d"    # 7d | 30d | 90d | 1y
+
+[tavily]
+# Tavily API 配置
+api_key_env = "TAVILY_API_KEY"
+search_depth = "advanced"     # basic | advanced (使用 advanced 获取更深入内容)
+max_results = 8               # 每次搜索返回结果数 (减少以避免超时)
+include_answer = false        # 是否包含 AI 生成的答案
+include_raw_content = false   # 是否包含原始页面内容
+
+[worker]
+# Worker 执行配置
+timeout_seconds = 60          # 单个 worker 超时时间 (秒) - 从600s减少到60s
+max_retries = 1               # 失败重试次数
+retry_backoff_seconds = 5     # 重试间隔
+
+[google_fallback]
+# Google 搜索 fallback 配置
+search_url_template = "https://www.google.com/search?q={query}&num={num}"
+max_results = 10
+user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+[exploration]
+# 探索深度配置 (AGGRESSIVE)
+max_depth_links = 30          # 单个研究最多深入探索的链接数 (增加)
+max_iterations = 20           # 探索循环最大次数 (增加)
+max_sub_questions = 8         # 衍生子问题最大数量 (增加)
+min_recursion_depth = 3       # 最小递归深度 (Layer 1-2-3 必须完成)
+extra_exploration_rounds = 2  # 达到最小要求后额外探索的轮数
+
+[parallel]
+# 并行搜索配置
+min_angles = 5                # 最少搜索角度数
+max_concurrent_agents = 5     # 最大并发 sub-agents
+
+[evaluation]
+# 链接评估阈值
+score_threshold = 0.5         # 值得探索的最低综合分数 (降低以探索更多)
+min_authority = 0.2           # 最低权威性要求 (降低)
+min_relevance = 0.4           # 最低相关性要求 (降低)
+
+# 权重配置
+relevance_weight = 0.3        # 相关性权重
+authority_weight = 0.3        # 权威性权重
+novelty_weight = 0.25         # 新颖性权重 (提高)
+depth_weight = 0.15           # 深度潜力权重 (提高)
+
+[knowledge]
+# 知识收集目标 (AGGRESSIVE)
+min_facts = 25                # 最少收集 facts 数 (提高)
+target_facts = 40             # 目标 facts 数 (提高)
+max_facts = 80                # 上限，防止无限收集 (提高)
+min_sources = 15              # 最少来源数 (新增)
+min_source_types = 3          # 最少来源类型数 (新闻/学术/官方等)
+
+# 结束条件
+coverage_threshold = 0.85     # 知识覆盖度阈值 (提高)
+stagnation_limit = 5          # 连续未发现新线索的最大次数 (提高)
+
+[cross_reference]
+# 交叉验证配置
+min_verification_sources = 2  # 每个重要事实最少验证来源数
+verification_required = true  # 是否强制要求验证
+
+[recursion]
+# 递归探索配置
+auto_recursion = true         # 自动递归探索
+max_recursion_depth = 4       # 最大递归深度
+recursion_triggers = ["event", "person", "company", "data", "policy"]
+
+[authority_domains]
+# 权威性评分映射 (0-1)
+high = [".gov", ".edu", "europa.eu", "un.org", "wikipedia.org", "arxiv.org"]
+medium = ["reuters.com", "bloomberg.com", "ft.com", "nytimes.com", "wsj.com", "nature.com", "ieee.org", "techcrunch.com", "theverge.com"]
+low = ["medium.com", "substack.com", "blogspot.com", "wordpress.com"]
+
+[synthesis]
+# 报告生成配置
+max_report_length = 25000     # 报告最大长度 (字符)
+min_report_length = 8000      # 报告最小长度 (字符) - ENFORCED
+include_contradictions = true # 是否包含矛盾部分
+include_uncertainties = true  # 是否包含不确定部分
+include_methodology = true    # 是否包含方法论说明
+min_citations = 10            # 最少引用数
+
+[quality]
+# 质量检查
+enforce_min_length = true     # 强制执行最小长度
+check_recency = true          # 检查内容时效性
+max_content_age_days = 30     # 最近内容最大年龄（天）
+require_multiple_angles = true # 要求多个搜索角度
+require_cross_reference = true # 要求交叉验证
+
+[formatting]
+# 格式要求
+use_emoji = false             # 禁止使用 emoji
+use_tables = true             # 鼓励使用表格整理信息
+use_headers = true            # 使用层级标题
+
+[cache]
+# 缓存配置
+enabled = true
+ttl_hours = 24                # 搜索结果缓存时间
+memory_enabled = true         # 是否存入 crew-memory
+
+[hitl]
+# Human-in-the-loop trigger conditions
+on_contradiction = true       # When contradictions found
+on_low_confidence = true      # When confidence is low
+on_sensitive_topic = true     # For sensitive topics
+
+[worker_isolation]
+# DeerFlow-inspired isolated worker contexts
+enabled = true                # Each worker only sees its own task
+hide_other_angles = true      # Workers don't know about other angles
+fresh_context_per_worker = true  # Each worker gets fresh LLM context
+
+[planning]
+# Dynamic angle generation (mofa-research style)
+min_angles = 4                # Minimum search angles
+max_angles = 8                # Maximum search angles
+target_angles = 6             # Target number of angles
+cross_language = true         # Generate angles in multiple languages
+auto_adjust_complexity = true  # Adjust based on query complexity
+
+[synthesis_output]
+# Output configuration (Docling-inspired structure)
+formats = ["markdown", "json"]  # Output formats
+include_raw_knowledgebase = true  # Include merged outputs
+include_analysis = true       # Include analysis report
+include_source_metadata = true  # Include full source metadata
+structured_sections = true    # Use structured section headers

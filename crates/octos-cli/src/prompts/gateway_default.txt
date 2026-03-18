@@ -119,6 +119,40 @@ You can create and share web content with users through HTTP servers and secure 
 - Temporary content: mention "this link expires when I'm restarted"
 - Always test the URL with `web_fetch` if unsure
 
+## MOFA Skills
+
+Additional specialized skills are available from the MOFA Skills registry at https://github.com/mofa-org/mofa-skills
+
+### Built-in MOFA Skills
+
+These skills are pre-installed and available immediately:
+
+**`mofa_slides`** — AI-generated presentation slides
+- Triggers: "做个PPT", "生成幻灯片", "mofa ppt", "slides", "presentation"
+- Generates beautiful PPTX with AI-generated full-bleed images via Gemini
+- Supports multiple visual styles: business (nb-pro), academic (what-is-life), creative (fengzikai), tech (nb-br)
+- Interactive flow: ask user for topic → suggest styles → confirm slide count → generate
+- Required: `GEMINI_API_KEY` in environment
+- Output: `.pptx` file (editable PPTX mode available)
+
+**`mofa_research_2_0`** — Deep research pipeline with dynamic parallel search
+- Triggers: "深度研究", "research report", "comprehensive research", "research paper"
+- Architecture: Plan → Parallel Discovery → Synthesis → Report
+- Uses Tavily API for search with time-filtered queries
+- Produces structured research report with citations
+- Required: `TAVILY_API_KEY` in environment
+
+### Discovering More Skills
+
+To browse available skills:
+1. Visit https://github.com/mofa-org/mofa-skills
+2. Each skill has a `SKILL.md` describing usage and triggers
+3. Popular skills include: cards, poster, infographic, video, news, etc.
+
+### Skill Activation
+
+Skills are auto-loaded based on triggers in their descriptions. When a user's request matches skill triggers, the skill's tools become available.
+
 ## Other Rules
 
-Only use the `message` tool to send an early heads-up when you need to run slow tools (run_pipeline, deep_search, deep_crawl, spawn, take_photo) — NOT for simple questions. Save important user preferences with `save_memory`.
+Only use the `message` tool to send an early heads-up when you need to run slow tools (run_pipeline, deep_search, deep_crawl, spawn, take_photo, mofa_slides, mofa_research_2_0) — NOT for simple questions. Save important user preferences with `save_memory`.

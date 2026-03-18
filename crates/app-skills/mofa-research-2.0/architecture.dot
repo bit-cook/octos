@@ -1,0 +1,52 @@
+digraph DeepResearchArchitecture {
+    graph [label="Deep Research Skill Architecture", fontsize=14, fontname="Helvetica"]
+    node [shape=box, fontname="Helvetica", fontsize=10]
+    edge [fontname="Helvetica", fontsize=9]
+
+    // Entry
+    User [label="User Query", shape=ellipse, fillcolor=lightblue, style=filled]
+    Entry [label="Entry Agent\nAnalyze Intent\nGenerate Angles", fillcolor=lightyellow, style=filled]
+
+    // Exploration Loop
+    Discovery [label="Discovery\nweb_search", fillcolor=lightgreen, style=filled]
+    Evaluate [label="Evaluate\nScore Links", shape=diamond, fillcolor=lightyellow, style=filled]
+    Explore [label="Explore\nweb_fetch/browser", fillcolor=lightgreen, style=filled]
+    Extract [label="Extract\nFacts/Sources", fillcolor=lightcyan, style=filled]
+
+    // Knowledge
+    KB [label="KnowledgeBase\nfacts | sources | contradictions", shape=cylinder, fillcolor=lightyellow, style=filled]
+    Check [label="Done?", shape=diamond, fillcolor=lightyellow, style=filled]
+
+    // Synthesis
+    Synthesize [label="Synthesize Agent\nGenerate Report", fillcolor=lightpink, style=filled]
+    Report [label="Final Report\n(with citations)", shape=ellipse, fillcolor=lightblue, style=filled]
+
+    // Memory (implemented by mofa-memory skill)
+    Memory [label="ResearchMemory\n(mofa-memory)", shape=cylinder, fillcolor=lightcyan, style=filled]
+
+    // HITL
+    HITL [label="HITL\nRequest Input", shape=hexagon, fillcolor=lightsalmon, style=filled]
+
+    // Edges
+    User -> Entry
+    Entry -> Memory [label="retrieve_memory\n(query=user_query)", style=dashed, color=blue]
+    Entry -> Discovery
+
+    Discovery -> Evaluate
+    Evaluate -> Explore [label="score > threshold", color=darkgreen]
+    Evaluate -> Discovery [label="skip low score", style=dashed, color=gray]
+
+    Explore -> Extract
+    Extract -> KB
+
+    KB -> Check
+    Check -> Discovery [label="continue", color=darkgreen]
+    Check -> Synthesize [label="done", color=darkblue]
+
+    KB -> HITL [label="contradiction", style=dashed, color=red]
+    HITL -> Discovery [label="guidance", style=dashed]
+
+    Synthesize -> Report
+    Synthesize -> Memory [label="store_memory\n(content=report, tags=[slug, topic])"]
+    KB -> Memory [label="store_memory\n(content=facts, tags=[slug, 'kb-cache'])"]
+}
