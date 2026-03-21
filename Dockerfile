@@ -30,7 +30,7 @@ RUN cargo build --release --bin octos 2>/dev/null || true
 COPY . .
 RUN touch crates/*/src/*.rs && \
     cargo build --release --bin octos \
-      --features telegram,discord,slack,whatsapp,feishu,email
+      --features api,telegram,discord,slack,whatsapp,feishu,email,matrix
 
 # ============================================================
 # Stage 2: Minimal runtime image
