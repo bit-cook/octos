@@ -1,6 +1,4 @@
-# ============================================================
 # Stage 1: Build the octos binary
-# ============================================================
 FROM rust:1.88-alpine AS builder
 
 RUN apk add --no-cache musl-dev git pkgconfig
@@ -57,11 +55,9 @@ COPY . .
 RUN find crates -name '*.rs' -exec touch {} + && \
     cargo build --release --bin octos \
       -p octos-cli \
-      --features api,telegram,discord,slack,whatsapp,feishu,email
+      --features api,telegram,discord,slack,whatsapp,feishu,email,matrix
 
-# ============================================================
 # Stage 2: Minimal runtime image
-# ============================================================
 FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates tzdata \
