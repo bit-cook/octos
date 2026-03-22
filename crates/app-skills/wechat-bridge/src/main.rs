@@ -345,31 +345,36 @@ async fn handle_ws_client(stream: TcpStream, state: Arc<BridgeState>) {
 async fn main() {
     let args = Args::parse();
 
-    // Get token: either from args or via QR login
-    let token = if args.token.is_empty() {
-        match qr_login(&args.base_url).await {
-            Ok(t) => t,
-            Err(e) => {
-                eprintln!("[wechat-bridge] QR login failed: {e}");
-                std::process::exit(1);
-            }
-        }
-    } else {
-        args.token.clone()
-    };
-
-    let state = BridgeState::new(token, args.base_url);
-
-    // Start WebSocket server
+    // Start WebSocket server FIRST so gateway can connect while QR login is pending
     let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
     let listener = TcpListener::bind(&addr).await.expect("failed to bind WS port");
     eprintln!("[wechat-bridge] WebSocket server on ws://localhost:{}", args.port);
 
-    // Start long-poll loop
-    let poll_state = state.clone();
-    tokio::spawn(async move { poll_loop(poll_state).await });
+    // Create state with empty token (will be filled after login)
+    let state = BridgeState::new(String::new(), args.base_url.clone());
 
-    // Accept WS clients
+    // Spawn login + poll in background
+    let login_state = state.clone();
+    let base_url = args.base_url.clone();
+    let initial_token = args.token.clone();
+    tokio::spawn(async move {
+        let token = if initial_token.is_empty() {
+            match qr_login(&base_url).await {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("[wechat-bridge] QR login failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            initial_token
+        };
+
+        *login_state.token.write().await = token;
+        poll_loop(login_state).await;
+    });
+
+    // Accept WS clients immediately (even before login completes)
     while let Ok((stream, _)) = listener.accept().await {
         let client_state = state.clone();
         tokio::spawn(async move { handle_ws_client(stream, client_state).await });
