@@ -562,7 +562,7 @@ impl ProfileStore {
         let profile = UserProfile {
             id: sub_id,
             name: sub_name.to_string(),
-            enabled: false,
+            enabled: true,
             data_dir: None,
             parent_id: Some(parent_id.to_string()),
             config: ProfileConfig {
