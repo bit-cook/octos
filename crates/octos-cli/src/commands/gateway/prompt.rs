@@ -92,7 +92,7 @@ pub async fn build_system_prompt(
     feature = "twilio",
     feature = "wecom",
     feature = "wecom-bot",
-    feature = "matrix"
+    feature = "qq-bot"
 ))]
 pub fn settings_str(settings: &serde_json::Value, key: &str, default: &str) -> String {
     settings
