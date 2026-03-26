@@ -1039,7 +1039,7 @@ impl GatewayCommand {
                 "group:admin",
                 "group:sessions",
                 "group:web",
-                "group:runtime",
+                
             ] {
                 tools.defer_group(group);
             }
