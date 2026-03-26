@@ -15,6 +15,7 @@ use super::admin;
 use super::auth_handlers;
 use super::handlers;
 use super::metrics;
+use super::sites;
 use super::static_files;
 use super::user_admin;
 use super::webhook_proxy;
@@ -287,7 +288,14 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route(
             "/api/admin/tenants/{id}/setup-script",
             get(admin::tenant_setup_script),
-        );
+        )
+        // Site management
+        .route("/api/admin/sites", get(sites::list_sites))
+        .route("/api/admin/sites", post(sites::create_site))
+        .route("/api/admin/sites/{id}/start", post(sites::start_site))
+        .route("/api/admin/sites/{id}/stop", post(sites::stop_site))
+        .route("/api/admin/sites/{id}", delete(sites::delete_site))
+        .route("/api/admin/tunnel/reload", post(sites::reload_tunnel));
 
     // Conditionally enable admin shell endpoint (disabled by default).
     let admin_api = if state.allow_admin_shell {

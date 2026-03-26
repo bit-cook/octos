@@ -11,6 +11,7 @@ import LoginPage from './pages/LoginPage'
 import UsersPage from './pages/UsersPage'
 import AdminBotPage from './pages/AdminBotPage'
 import ServerMetricsPage from './pages/ServerMetricsPage'
+import SitesPage from './pages/SitesPage'
 import { HomePage, LlmPage, MessagingPage, ToolsPage, SkillsPage, SystemPage } from './pages/profile'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="users" element={<AdminGuard><UsersPage /></AdminGuard>} />
             <Route path="admin-bot" element={<AdminGuard><AdminBotPage /></AdminGuard>} />
             <Route path="server" element={<AdminGuard><ServerMetricsPage /></AdminGuard>} />
+            <Route path="sites" element={<AdminGuard><SitesPage /></AdminGuard>} />
             <Route path="profiles/new" element={<AdminGuard><NewProfile /></AdminGuard>} />
 
             {/* Admin managing specific profile */}

@@ -7,6 +7,7 @@ pub mod auth_handlers;
 mod handlers;
 pub mod metrics;
 mod router;
+pub mod sites;
 mod sse;
 mod static_files;
 pub mod user_admin;
@@ -22,6 +23,7 @@ use std::sync::Arc;
 use crate::otp::AuthManager;
 use crate::process_manager::ProcessManager;
 use crate::profiles::ProfileStore;
+use crate::site_manager::SiteManager;
 use crate::tenant::TenantStore;
 use crate::user_store::UserStore;
 
@@ -67,4 +69,6 @@ pub struct AppState {
     pub frps_port: Option<u16>,
     /// Whether the admin shell endpoint is enabled (default: false).
     pub allow_admin_shell: bool,
+    /// Site manager for web tunnel sites.
+    pub site_manager: Option<Arc<SiteManager>>,
 }

@@ -1,4 +1,5 @@
 import type {
+  SiteStatus,
   ProfileResponse,
   OverviewResponse,
   ActionResponse,
@@ -176,6 +177,15 @@ export const api = {
 
   removeProfileSkill: (id: string, name: string) =>
     request<ActionResponse>(`/profiles/${id}/skills/${name}`, { method: 'DELETE' }),
+
+  // Sites
+  listSites: () => request<SiteStatus[]>('/sites'),
+  createSite: (data: { name: string; subdomain: string; title?: string }) =>
+    request<SiteStatus>('/sites', { method: 'POST', body: JSON.stringify(data) }),
+  startSite: (id: string) => request<ActionResponse>(`/sites/${id}/start`, { method: 'POST' }),
+  stopSite: (id: string) => request<ActionResponse>(`/sites/${id}/stop`, { method: 'POST' }),
+  deleteSite: (id: string) => request<ActionResponse>(`/sites/${id}`, { method: 'DELETE' }),
+  reloadTunnel: () => request<ActionResponse>('/tunnel/reload', { method: 'POST' }),
 }
 
 // ── Auth API (public) ───────────────────────────────────────────────

@@ -285,3 +285,15 @@ export interface SystemMetrics {
     uptime_secs: number
   }
 }
+
+export interface SiteStatus {
+  id: string
+  name: string
+  subdomain: string
+  profile_id: string
+  port: number
+  url: string
+  local_url: string
+  running: boolean
+  created_at: string
+}

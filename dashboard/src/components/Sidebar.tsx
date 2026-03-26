@@ -54,6 +54,7 @@ export default function Sidebar() {
                 <SidebarLink to="/" end icon={<GridIcon />} label="All Profiles" />
                 <SidebarLink to="/users" icon={<UsersIcon />} label="Users" />
                 <SidebarLink to="/admin-bot" icon={<BotIcon />} label="Admin Bot" />
+                <SidebarLink to="/sites" icon={<GlobeIcon />} label="Sites" />
                 <SidebarLink to="/server" icon={<PulseIcon />} label="Server" />
               </>
             )}
@@ -204,6 +205,14 @@ function BotIcon() {
   return (
     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714a2.25 2.25 0 00.659 1.591L19 14.5M14.25 3.104c.251.023.501.05.75.082M19 14.5l-1.5 4.5H6.5L5 14.5m14 0H5" />
+    </svg>
+  )
+}
+
+function GlobeIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
     </svg>
   )
 }

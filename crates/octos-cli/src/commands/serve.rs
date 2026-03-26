@@ -262,6 +262,20 @@ impl ServeCommand {
             frps_server: std::env::var("FRPS_SERVER").ok(),
             frps_port: std::env::var("FRPS_PORT").ok().and_then(|p| p.parse().ok()),
             allow_admin_shell: config.allow_admin_shell,
+            site_manager: {
+                let site_store = Arc::new(
+                    crate::site_store::SiteStore::open(&data_dir)
+                        .wrap_err("failed to open site store")?,
+                );
+                let mgr = Arc::new(crate::site_manager::SiteManager::new(site_store, &data_dir));
+                let mgr_clone = mgr.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = mgr_clone.start_all().await {
+                        tracing::warn!("failed to auto-start sites: {}", e);
+                    }
+                });
+                Some(mgr)
+            },
         });
 
         // Auto-start enabled profiles
