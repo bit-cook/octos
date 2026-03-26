@@ -24,6 +24,8 @@ pub mod session_actor;
 pub mod status_indicator;
 pub mod status_layers;
 pub mod stream_reporter;
+pub mod notebook;
+pub mod space;
 pub mod tenant;
 pub mod tools;
 #[cfg(feature = "api")]

@@ -6,7 +6,9 @@ pub mod admin;
 pub mod auth_handlers;
 mod handlers;
 pub mod metrics;
+pub mod notebook_handlers;
 mod router;
+pub mod space_handlers;
 mod sse;
 mod static_files;
 pub mod user_admin;
@@ -19,9 +21,11 @@ pub use sse::SseBroadcaster;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::notebook::NotebookStore;
 use crate::otp::AuthManager;
 use crate::process_manager::ProcessManager;
 use crate::profiles::ProfileStore;
+use crate::space::SpaceStore;
 use crate::tenant::TenantStore;
 use crate::user_store::UserStore;
 
@@ -67,4 +71,8 @@ pub struct AppState {
     pub frps_port: Option<u16>,
     /// Whether the admin shell endpoint is enabled (default: false).
     pub allow_admin_shell: bool,
+    /// Notebook store for MoFa Notebook feature.
+    pub notebook_store: Option<Arc<NotebookStore>>,
+    /// Space store for class/course spaces.
+    pub space_store: Option<Arc<SpaceStore>>,
 }
