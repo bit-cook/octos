@@ -136,7 +136,7 @@ pub struct Note {
 
 /// How a note was created.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum NoteOrigin {
     Manual,
     ChatReply,
