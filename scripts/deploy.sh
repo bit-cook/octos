@@ -750,11 +750,18 @@ echo "  ominix-api plist generated"'"'"
         fi
 
         # --- Chrome/Chromium (for deep-crawl CDP) ---
-        if [ -d "/Applications/Google Chrome.app" ] || command -v chromium &>/dev/null; then
-            echo "  Chrome/Chromium: OK"
+        # Prefer Google Chrome over Chromium (Chromium via brew gets quarantined on macOS)
+        if [ -d "/Applications/Google Chrome.app" ]; then
+            echo "  Chrome/Chromium: OK (Google Chrome)"
+        elif command -v chromium &>/dev/null; then
+            echo "  Chrome/Chromium: OK (chromium)"
         else
-            echo "  Installing Chromium..."
-            brew install --cask chromium --no-quarantine 2>/dev/null || true
+            echo "  Installing Google Chrome..."
+            brew install --cask google-chrome --no-quarantine 2>/dev/null || true
+        fi
+        # Remove broken chromium wrapper if Google Chrome is available
+        if [ -d "/Applications/Google Chrome.app" ] && [ -f /opt/homebrew/bin/chromium ]; then
+            rm -f /opt/homebrew/bin/chromium 2>/dev/null
         fi
 
         # --- Global npm packages (for PPTX skill) ---
