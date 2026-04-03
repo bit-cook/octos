@@ -536,7 +536,7 @@ fn build_openai_content(msg: &Message, hints: &ModelHints) -> Option<OpenAIConte
             let mut parts = Vec::new();
             for path in &non_image_files {
                 // Include full path so the agent can use read_file to access it
-                parts.push(format!("{path}"));
+                parts.push(path.to_string());
             }
             if stripped_images {
                 for p in msg.media.iter().filter(|p| vision::is_image(p)) {
