@@ -265,9 +265,7 @@ impl ServeCommand {
             notebook_store: crate::notebook::NotebookStore::open(&data_dir)
                 .ok()
                 .map(Arc::new),
-            space_store: crate::space::SpaceStore::open(&data_dir)
-                .ok()
-                .map(Arc::new),
+            space_store: crate::space::SpaceStore::open(&data_dir).ok().map(Arc::new),
         });
 
         // Auto-start enabled profiles

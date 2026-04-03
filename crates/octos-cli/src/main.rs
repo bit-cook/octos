@@ -14,6 +14,7 @@ pub mod cron_tool;
 pub mod gateway_dispatcher;
 #[cfg(feature = "api")]
 pub mod monitor;
+pub mod notebook;
 #[cfg(feature = "api")]
 pub mod otp;
 pub mod persona_service;
@@ -21,11 +22,10 @@ pub mod persona_service;
 pub mod process_manager;
 pub mod profiles;
 pub mod session_actor;
+pub mod space;
 pub mod status_indicator;
 pub mod status_layers;
 pub mod stream_reporter;
-pub mod notebook;
-pub mod space;
 pub mod tenant;
 pub mod tools;
 #[cfg(feature = "api")]

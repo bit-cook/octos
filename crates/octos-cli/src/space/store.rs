@@ -57,10 +57,10 @@ impl SpaceStore {
         if !path.exists() {
             return Ok(None);
         }
-        let content =
-            std::fs::read_to_string(&path).wrap_err_with(|| format!("failed to read space: {id}"))?;
-        let space =
-            serde_json::from_str(&content).wrap_err_with(|| format!("failed to parse space: {id}"))?;
+        let content = std::fs::read_to_string(&path)
+            .wrap_err_with(|| format!("failed to read space: {id}"))?;
+        let space = serde_json::from_str(&content)
+            .wrap_err_with(|| format!("failed to parse space: {id}"))?;
         Ok(Some(space))
     }
 

@@ -310,24 +310,78 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/notebooks", get(notebook_handlers::list_notebooks))
         .route("/api/notebooks", post(notebook_handlers::create_notebook))
         .route("/api/notebooks/{id}", get(notebook_handlers::get_notebook))
-        .route("/api/notebooks/{id}", put(notebook_handlers::update_notebook))
-        .route("/api/notebooks/{id}", delete(notebook_handlers::delete_notebook))
-        .route("/api/notebooks/{id}/sources", get(notebook_handlers::list_sources))
-        .route("/api/notebooks/{id}/sources", post(notebook_handlers::add_source))
-        .route("/api/notebooks/{id}/sources/upload", post(notebook_handlers::upload_source))
-        .route("/api/notebooks/{id}/sources/{sid}", get(notebook_handlers::get_source))
-        .route("/api/notebooks/{id}/sources/{sid}", delete(notebook_handlers::delete_source))
-        .route("/api/notebooks/{id}/sources/{sid}/content", get(notebook_handlers::get_source_content))
-        .route("/api/notebooks/{id}/notes", get(notebook_handlers::list_notes))
-        .route("/api/notebooks/{id}/notes", post(notebook_handlers::create_note))
-        .route("/api/notebooks/{id}/notes/{nid}", put(notebook_handlers::update_note))
-        .route("/api/notebooks/{id}/notes/{nid}", delete(notebook_handlers::delete_note))
-        .route("/api/notebooks/{id}/chat", post(notebook_handlers::notebook_chat))
-        .route("/api/notebooks/{id}/share", post(notebook_handlers::share_notebook))
-        .route("/api/notebooks/{id}/share", get(notebook_handlers::list_shares))
-        .route("/api/notebooks/{id}/share/{share_id}", delete(notebook_handlers::revoke_share))
-        .route("/api/library/import", post(notebook_handlers::library_import))
-        .route("/api/library/isbn/{isbn}", get(notebook_handlers::isbn_lookup))
+        .route(
+            "/api/notebooks/{id}",
+            put(notebook_handlers::update_notebook),
+        )
+        .route(
+            "/api/notebooks/{id}",
+            delete(notebook_handlers::delete_notebook),
+        )
+        .route(
+            "/api/notebooks/{id}/sources",
+            get(notebook_handlers::list_sources),
+        )
+        .route(
+            "/api/notebooks/{id}/sources",
+            post(notebook_handlers::add_source),
+        )
+        .route(
+            "/api/notebooks/{id}/sources/upload",
+            post(notebook_handlers::upload_source),
+        )
+        .route(
+            "/api/notebooks/{id}/sources/{sid}",
+            get(notebook_handlers::get_source),
+        )
+        .route(
+            "/api/notebooks/{id}/sources/{sid}",
+            delete(notebook_handlers::delete_source),
+        )
+        .route(
+            "/api/notebooks/{id}/sources/{sid}/content",
+            get(notebook_handlers::get_source_content),
+        )
+        .route(
+            "/api/notebooks/{id}/notes",
+            get(notebook_handlers::list_notes),
+        )
+        .route(
+            "/api/notebooks/{id}/notes",
+            post(notebook_handlers::create_note),
+        )
+        .route(
+            "/api/notebooks/{id}/notes/{nid}",
+            put(notebook_handlers::update_note),
+        )
+        .route(
+            "/api/notebooks/{id}/notes/{nid}",
+            delete(notebook_handlers::delete_note),
+        )
+        .route(
+            "/api/notebooks/{id}/chat",
+            post(notebook_handlers::notebook_chat),
+        )
+        .route(
+            "/api/notebooks/{id}/share",
+            post(notebook_handlers::share_notebook),
+        )
+        .route(
+            "/api/notebooks/{id}/share",
+            get(notebook_handlers::list_shares),
+        )
+        .route(
+            "/api/notebooks/{id}/share/{share_id}",
+            delete(notebook_handlers::revoke_share),
+        )
+        .route(
+            "/api/library/import",
+            post(notebook_handlers::library_import),
+        )
+        .route(
+            "/api/library/isbn/{isbn}",
+            get(notebook_handlers::isbn_lookup),
+        )
         .with_state(state.clone());
 
     // Space API routes (user-level auth)
@@ -338,17 +392,27 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/spaces/{id}", put(space_handlers::update_space))
         .route("/api/spaces/{id}", delete(space_handlers::delete_space))
         .route("/api/spaces/{id}/members", post(space_handlers::add_member))
-        .route("/api/spaces/{id}/members/{uid}", delete(space_handlers::remove_member))
-        .route("/api/spaces/{id}/notebooks", post(space_handlers::link_notebook))
+        .route(
+            "/api/spaces/{id}/members/{uid}",
+            delete(space_handlers::remove_member),
+        )
+        .route(
+            "/api/spaces/{id}/notebooks",
+            post(space_handlers::link_notebook),
+        )
         .with_state(state.clone());
 
     // Build the authenticated routes
     let protected = if has_auth {
         // Routes requiring user-level auth (user session OR admin token)
-        let user_routes = my_api.merge(chat_api).merge(notebook_api).merge(space_api).layer(middleware::from_fn_with_state(
-            state.clone(),
-            user_auth_middleware,
-        ));
+        let user_routes = my_api
+            .merge(chat_api)
+            .merge(notebook_api)
+            .merge(space_api)
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                user_auth_middleware,
+            ));
 
         // Routes requiring admin-level auth (admin token only)
         let admin_routes = admin_api.layer(middleware::from_fn_with_state(
@@ -359,7 +423,11 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         user_routes.merge(admin_routes)
     } else {
         // No auth configured — all routes accessible
-        my_api.merge(chat_api).merge(notebook_api).merge(space_api).merge(admin_api)
+        my_api
+            .merge(chat_api)
+            .merge(notebook_api)
+            .merge(space_api)
+            .merge(admin_api)
     };
 
     // Webhook proxy routes (unauthenticated — Feishu/Twilio servers can't authenticate)

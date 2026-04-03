@@ -64,8 +64,8 @@ impl NotebookStore {
         }
         let content = std::fs::read_to_string(&path)
             .wrap_err_with(|| format!("failed to read notebook: {id}"))?;
-        let nb =
-            serde_json::from_str(&content).wrap_err_with(|| format!("failed to parse notebook: {id}"))?;
+        let nb = serde_json::from_str(&content)
+            .wrap_err_with(|| format!("failed to parse notebook: {id}"))?;
         Ok(Some(nb))
     }
 
@@ -85,8 +85,7 @@ impl NotebookStore {
         if !path.exists() {
             return Ok(false);
         }
-        std::fs::remove_file(&path)
-            .wrap_err_with(|| format!("failed to delete notebook: {id}"))?;
+        std::fs::remove_file(&path).wrap_err_with(|| format!("failed to delete notebook: {id}"))?;
         Ok(true)
     }
 

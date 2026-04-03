@@ -302,9 +302,7 @@ fn extract_pdf_text(pdf_bytes: &[u8], filename: &str) -> String {
         .arg("-")
         .output();
     match output {
-        Ok(o) if o.status.success() => {
-            String::from_utf8_lossy(&o.stdout).into_owned()
-        }
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => {
             tracing::info!("pdftotext not available, using filename as fallback");
             filename.to_string()
@@ -975,19 +973,21 @@ pub async fn library_import(
 // ── Library: ISBN lookup ─────────────────────────────────────────────
 
 /// GET /api/library/isbn/:isbn — lookup book info from Open Library.
-pub async fn isbn_lookup(
-    Path(isbn): Path<String>,
-) -> Result<Json<BookMeta>, (StatusCode, String)> {
-    let url = format!(
-        "https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-    );
-    let resp = reqwest::get(&url)
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Open Library request failed: {e}")))?;
-    let body: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("failed to parse response: {e}")))?;
+pub async fn isbn_lookup(Path(isbn): Path<String>) -> Result<Json<BookMeta>, (StatusCode, String)> {
+    let url =
+        format!("https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data");
+    let resp = reqwest::get(&url).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Open Library request failed: {e}"),
+        )
+    })?;
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("failed to parse response: {e}"),
+        )
+    })?;
 
     let key = format!("ISBN:{isbn}");
     let data = body
@@ -1047,7 +1047,11 @@ mod tests {
         let chunks = split_into_chunks(text, 30);
         assert!(chunks.len() >= 2);
         // All content should be covered
-        let total: String = chunks.iter().map(|c| c.content.clone()).collect::<Vec<_>>().join("\n\n");
+        let total: String = chunks
+            .iter()
+            .map(|c| c.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
         assert_eq!(total, text);
     }
 
