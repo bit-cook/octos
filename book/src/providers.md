@@ -119,6 +119,17 @@ Use `base_url` to point at self-hosted or proxy endpoints:
 }
 ```
 
+When configuring MiniMax models, please refer to the [MiniMax documentation](https://platform.minimaxi.com/docs/api-reference/text-anthropic-api). The default minimax provider currently has some issues, so you need to use the anthropic provider instead.
+
+```json
+{
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "model": "MiniMax-M2.7",
+  "provider": "anthropic",
+  "base_url": "https://api.minimaxi.com/anthropic"
+}
+
+
 ### API Type Override
 
 The `api_type` field forces a specific wire format when a provider uses a non-standard protocol:
