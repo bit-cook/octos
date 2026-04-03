@@ -1,7 +1,7 @@
 ---
 name: web-tunnel
 version: 1.0.0
-author: mofa
+author: octos
 description: Deploy websites to public internet via Cloudflare Tunnel with a management dashboard
 always: false
 ---
@@ -15,7 +15,7 @@ You can deploy websites to the public internet via Cloudflare Tunnel and manage 
 The tunnel system must be running. Start it with:
 
 ```bash
-cd /Users/yao/Desktop/code/work/mofa-org/tunnel-test
+cd $OCTOS_HOME
 docker compose up -d
 docker compose --profile tunnel up -d cloudflared
 ```
@@ -42,7 +42,7 @@ curl -s -X POST http://localhost:9080/api/sites \
 
 Parameters:
 - `name` (required): Container name, lowercase, no spaces (use hyphens)
-- `subdomain` (required): Subdomain under mofa.fm (site will be at `https://{subdomain}.mofa.fm`)
+- `subdomain` (required): Subdomain under octos-cloud.org (site will be at `https://{subdomain}.octos-cloud.org`)
 - `title` (optional): Display title for the generated page
 - `color` (optional): CSS gradient color for the generated page (e.g. `#6366f1`)
 
@@ -52,7 +52,7 @@ This automatically:
 3. Updates cloudflared tunnel config
 4. Restarts cloudflared to apply changes
 
-The site becomes accessible at `https://{subdomain}.mofa.fm` within seconds.
+The site becomes accessible at `https://{subdomain}.octos-cloud.org` within seconds.
 
 ### Stop a site
 
@@ -92,7 +92,7 @@ After creating a site, you can replace the default page by writing HTML to the s
 
 ```bash
 # Write custom HTML for a site named "my-site"
-cat > /Users/yao/Desktop/code/work/mofa-org/tunnel-test/sites/my-site/index.html << 'EOF'
+cat > ~/.octos/www/my-site/index.html << 'EOF'
 <!DOCTYPE html>
 <html>
 <head><title>My Custom Site</title></head>
@@ -105,12 +105,12 @@ The nginx container serves from this directory with live reload (no restart need
 
 ## Workflow Example
 
-When user asks "help me create a bakery website at bakery.mofa.fm":
+When user asks "help me create a bakery website at bakery.octos-cloud.org":
 
 1. Create the site: `curl -X POST http://localhost:9080/api/sites -H "Content-Type: application/json" -d '{"name":"bakery","subdomain":"bakery","title":"Bakery"}'`
 2. Generate beautiful HTML for the bakery website
-3. Write it to `/Users/yao/Desktop/code/work/mofa-org/tunnel-test/sites/bakery/index.html`
-4. The site is immediately live at `https://bakery.mofa.fm`
+3. Write it to `~/.octos/www/bakery/index.html`
+4. The site is immediately live at `https://bakery.octos-cloud.org`
 
 ## Dashboard
 
@@ -123,7 +123,7 @@ The web Dashboard at `http://localhost:9080` provides a visual interface to:
 
 ## Domain
 
-All sites are mapped under `mofa.fm`: `https://{subdomain}.mofa.fm`
+All sites are mapped under `octos-cloud.org`: `https://{subdomain}.octos-cloud.org`
 
 ## Notes
 

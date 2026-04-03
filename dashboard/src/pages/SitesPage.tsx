@@ -102,7 +102,7 @@ function CreateSiteModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Subdomain</label>
             <input value={subdomain} onChange={e => setSubdomain(e.target.value)} placeholder="my-site" className="w-full px-3 py-2 bg-bg border border-gray-700/50 rounded-lg text-sm text-white placeholder-gray-600 outline-none focus:border-accent" />
-            <p className="text-[10px] text-gray-600 mt-1">https://{subdomain || '...'}.mofa.fm</p>
+            <p className="text-[10px] text-gray-600 mt-1">https://{subdomain || '...'}.octos-cloud.org</p>
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1.5">Title (optional)</label>

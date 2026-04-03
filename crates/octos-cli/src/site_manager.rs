@@ -11,8 +11,8 @@ use tokio::sync::RwLock;
 
 use crate::site_store::{Site, SiteStore};
 
-const DEFAULT_DOMAIN: &str = "mofa.ai";
-const TUNNEL_NAME: &str = "mofa-test";
+const DEFAULT_DOMAIN: &str = "octos-cloud.org";
+const TUNNEL_NAME: &str = "octos";
 const PORT_BASE: u16 = 10000;
 
 struct SiteProcess {
