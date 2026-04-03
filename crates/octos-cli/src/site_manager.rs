@@ -66,19 +66,32 @@ impl SiteManager {
     pub async fn list_sites(&self) -> Result<Vec<SiteStatus>> {
         let sites = self.store.list()?;
         let running = self.running.read().await;
-        Ok(sites.into_iter().map(|s| {
-            let url = s.url();
-            SiteStatus {
-                running: running.contains_key(&s.id),
-                url,
-                local_url: format!("http://localhost:{}", s.port),
-                profile_id: s.profile_id.clone(),
-                id: s.id, name: s.name, subdomain: s.subdomain, port: s.port, created_at: s.created_at,
-            }
-        }).collect())
+        Ok(sites
+            .into_iter()
+            .map(|s| {
+                let url = s.url();
+                SiteStatus {
+                    running: running.contains_key(&s.id),
+                    url,
+                    local_url: format!("http://localhost:{}", s.port),
+                    profile_id: s.profile_id.clone(),
+                    id: s.id,
+                    name: s.name,
+                    subdomain: s.subdomain,
+                    port: s.port,
+                    created_at: s.created_at,
+                }
+            })
+            .collect())
     }
 
-    pub async fn create_site(&self, name: &str, subdomain: &str, profile_id: &str, title: Option<&str>) -> Result<Site> {
+    pub async fn create_site(
+        &self,
+        name: &str,
+        subdomain: &str,
+        profile_id: &str,
+        title: Option<&str>,
+    ) -> Result<Site> {
         let id = name.to_lowercase().replace(' ', "-");
         if self.store.get(&id)?.is_some() {
             bail!("site '{}' already exists", id);
@@ -92,10 +105,15 @@ impl SiteManager {
         std::fs::write(www_path.join("index.html"), html)?;
 
         let site = Site {
-            id: id.clone(), name: name.to_string(), subdomain: subdomain.to_string(),
+            id: id.clone(),
+            name: name.to_string(),
+            subdomain: subdomain.to_string(),
             profile_id: profile_id.to_string(),
-            path: www_path, port, tunnel_domain: self.domain.clone(),
-            created_at: Utc::now(), updated_at: Utc::now(),
+            path: www_path,
+            port,
+            tunnel_domain: self.domain.clone(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
         };
         self.store.save(&site)?;
         self.start_site(&id).await?;
@@ -111,9 +129,14 @@ impl SiteManager {
     pub async fn start_site(&self, id: &str) -> Result<()> {
         {
             let running = self.running.read().await;
-            if running.contains_key(id) { return Ok(()); }
+            if running.contains_key(id) {
+                return Ok(());
+            }
         }
-        let site = self.store.get(id)?.ok_or_else(|| eyre::eyre!("site '{}' not found", id))?;
+        let site = self
+            .store
+            .get(id)?
+            .ok_or_else(|| eyre::eyre!("site '{}' not found", id))?;
         let serve_dir = site.path.clone();
         let port = site.port;
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -126,21 +149,38 @@ impl SiteManager {
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             let listener = match tokio::net::TcpListener::bind(addr).await {
                 Ok(l) => l,
-                Err(e) => { tracing::error!(site = %site_id, port, "failed to bind: {}", e); return; }
+                Err(e) => {
+                    tracing::error!(site = %site_id, port, "failed to bind: {}", e);
+                    return;
+                }
             };
             tracing::info!(site = %site_id, port, "site server started");
-            axum::serve(listener, app).with_graceful_shutdown(async { let _ = shutdown_rx.await; }).await.ok();
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .ok();
             tracing::info!(site = %site_id, "site server stopped");
         });
 
         let mut running = self.running.write().await;
-        running.insert(id.to_string(), SiteProcess { port, started_at: Utc::now(), shutdown_tx });
+        running.insert(
+            id.to_string(),
+            SiteProcess {
+                port,
+                started_at: Utc::now(),
+                shutdown_tx,
+            },
+        );
         Ok(())
     }
 
     pub async fn stop_site(&self, id: &str) -> Result<()> {
         let mut running = self.running.write().await;
-        if let Some(proc) = running.remove(id) { let _ = proc.shutdown_tx.send(()); }
+        if let Some(proc) = running.remove(id) {
+            let _ = proc.shutdown_tx.send(());
+        }
         Ok(())
     }
 
@@ -148,19 +188,29 @@ impl SiteManager {
         let sites = self.store.list()?;
         let mut ingress = String::new();
         for site in &sites {
-            ingress.push_str(&format!("  - hostname: {}\n    service: http://localhost:{}\n", site.hostname(), site.port));
+            ingress.push_str(&format!(
+                "  - hostname: {}\n    service: http://localhost:{}\n",
+                site.hostname(),
+                site.port
+            ));
         }
         ingress.push_str("  - service: http_status:404\n");
-        Ok(format!("tunnel: {tunnel_id}\ncredentials-file: {creds_file}\n\ningress:\n{ingress}"))
+        Ok(format!(
+            "tunnel: {tunnel_id}\ncredentials-file: {creds_file}\n\ningress:\n{ingress}"
+        ))
     }
 
     pub async fn reload_tunnel(&self) -> Result<String> {
         let config_dir = self.data_dir.join("cloudflared");
         std::fs::create_dir_all(&config_dir)?;
         let config_path = config_dir.join("config.yml");
-        if !config_path.exists() { return Ok("no tunnel configured yet".into()); }
+        if !config_path.exists() {
+            return Ok("no tunnel configured yet".into());
+        }
         let (tunnel_id, creds_file) = parse_tunnel_config(&std::fs::read_to_string(&config_path)?);
-        if tunnel_id.is_empty() { return Ok("no tunnel ID in config".into()); }
+        if tunnel_id.is_empty() {
+            return Ok("no tunnel ID in config".into());
+        }
         let config = self.generate_tunnel_config(&tunnel_id, &creds_file)?;
         std::fs::write(&config_path, &config)?;
         self.stop_tunnel().await?;
@@ -170,16 +220,35 @@ impl SiteManager {
 
     pub async fn add_dns_route(&self, hostname: &str) -> Result<String> {
         let fqdn = hostname.to_string();
-        let output = Command::new("cloudflared").args(["tunnel", "route", "dns", TUNNEL_NAME, &fqdn]).output().await?;
-        let out = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-        if output.status.success() { Ok(out) } else { bail!("cloudflared route dns failed: {}", out) }
+        let output = Command::new("cloudflared")
+            .args(["tunnel", "route", "dns", TUNNEL_NAME, &fqdn])
+            .output()
+            .await?;
+        let out = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if output.status.success() {
+            Ok(out)
+        } else {
+            bail!("cloudflared route dns failed: {}", out)
+        }
     }
 
     async fn start_tunnel(&self, config_path: &Path) -> Result<()> {
         let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
         let mut child = Command::new("cloudflared")
-            .args(["tunnel", "--no-autoupdate", "--config", &config_path.to_string_lossy(), "run"])
-            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn()?;
+            .args([
+                "tunnel",
+                "--no-autoupdate",
+                "--config",
+                &config_path.to_string_lossy(),
+                "run",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
         let pid = child.id().unwrap_or(0);
         tracing::info!(pid, "cloudflared tunnel started");
         if let Some(stderr) = child.stderr.take() {
@@ -196,12 +265,18 @@ impl SiteManager {
                 _ = stop_rx.changed() => { let _ = child.kill().await; tracing::info!("cloudflared killed"); }
             }
         });
-        *self.tunnel.write().await = Some(TunnelProcess { pid, started_at: Utc::now(), stop_tx });
+        *self.tunnel.write().await = Some(TunnelProcess {
+            pid,
+            started_at: Utc::now(),
+            stop_tx,
+        });
         Ok(())
     }
 
     pub async fn stop_tunnel(&self) -> Result<()> {
-        if let Some(proc) = self.tunnel.write().await.take() { let _ = proc.stop_tx.send(true); }
+        if let Some(proc) = self.tunnel.write().await.take() {
+            let _ = proc.stop_tx.send(true);
+        }
         Ok(())
     }
 
@@ -219,16 +294,22 @@ fn parse_tunnel_config(content: &str) -> (String, String) {
     let mut tid = String::new();
     let mut creds = String::new();
     for line in content.lines() {
-        if let Some(v) = line.strip_prefix("tunnel:") { tid = v.trim().to_string(); }
-        if let Some(v) = line.strip_prefix("credentials-file:") { creds = v.trim().to_string(); }
+        if let Some(v) = line.strip_prefix("tunnel:") {
+            tid = v.trim().to_string();
+        }
+        if let Some(v) = line.strip_prefix("credentials-file:") {
+            creds = v.trim().to_string();
+        }
     }
     (tid, creds)
 }
 
 fn generate_default_html(title: &str, subdomain: &str, domain: &str, port: u16) -> String {
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="zh">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{title} - {domain}</title>
 <style>*{{margin:0;padding:0;box-sizing:border-box}}body{{font-family:system-ui,sans-serif;background:linear-gradient(135deg,#6366f1,#1e293b);min-height:100vh;display:flex;align-items:center;justify-content:center;color:#fff}}.card{{background:rgba(255,255,255,.12);backdrop-filter:blur(10px);border-radius:20px;padding:60px;text-align:center;max-width:500px}}h1{{font-size:2.5rem;margin-bottom:12px}}p{{font-size:1.1rem;opacity:.85}}.badge{{display:inline-block;margin-top:16px;background:rgba(255,255,255,.18);padding:6px 18px;border-radius:16px;font-size:.85rem}}</style></head>
-<body><div class="card"><h1>{title}</h1><p>{subdomain}.{domain}</p><div class="badge">port {port}</div></div></body></html>"#)
+<body><div class="card"><h1>{title}</h1><p>{subdomain}.{domain}</p><div class="badge">port {port}</div></div></body></html>"#
+    )
 }

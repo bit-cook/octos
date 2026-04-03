@@ -21,7 +21,10 @@ pub struct Site {
 impl Site {
     /// Full hostname: `{subdomain}.{profile_id}.{tunnel_domain}`
     pub fn hostname(&self) -> String {
-        format!("{}.{}.{}", self.subdomain, self.profile_id, self.tunnel_domain)
+        format!(
+            "{}.{}.{}",
+            self.subdomain, self.profile_id, self.tunnel_domain
+        )
     }
 
     /// Public URL.
@@ -124,7 +127,10 @@ fn validate_site_id(id: &str) -> Result<()> {
     if id.is_empty() || id.len() > 64 {
         eyre::bail!("site id must be 1-64 characters");
     }
-    if !id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
         eyre::bail!("site id may only contain lowercase letters, digits, and hyphens");
     }
     if id.starts_with('-') || id.ends_with('-') {
