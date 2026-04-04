@@ -39,6 +39,8 @@ scripts/deploy.sh
 !CLAUDE.md
 !CHANGELOG.md
 !RELEASE.md
+!architect.md
+!examples/**/*.md
 # User-facing docs only (internal analysis/audits stay local)
 !docs/user-guide.md
 !docs/user-guide-zh.md
