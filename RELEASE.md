@@ -1,5 +1,13 @@
 # Release Notes
 
+## v0.2.8 — Developer Examples for Robot Safety Features
+
+- Add `inspection_safety` example (octos-agent): demonstrates Permissions, Hooks, and BlackBoxRecorder with a gas pipeline valve inspection scenario
+- Add `realtime_heartbeat` example (octos-agent): demonstrates RealtimeConfig, Heartbeat stall detection, and SensorContextInjector ring buffer
+- Add `pick_and_place_lifecycle` example (octos-plugin): demonstrates HardwareLifecycle phases with LifecycleExecutor retry/timeout handling
+- Add `dora-bridge-config` config example: sample `dora_tool_map.json` and `inspection_mission.dot` DOT pipeline with HandlerKind, DeadlineAction, Invariant, and MissionCheckpoint usage
+- Re-export realtime types (`RealtimeConfig`, `Heartbeat`, `HeartbeatState`, `SensorSnapshot`, `SensorContextInjector`) from `octos_agent` top-level
+
 ## v0.2.1 — Tiered Permission Model
 
 - Add `SafetyTier` enum (`Observe`, `SafeMotion`, `FullActuation`, `EmergencyOverride`) with `PartialOrd` ordering

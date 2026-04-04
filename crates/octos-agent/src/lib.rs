@@ -47,6 +47,9 @@ pub use plugins::{PluginLoadResult, PluginLoader};
 pub use progress::{ConsoleReporter, ProgressEvent, ProgressReporter, SilentReporter};
 pub use prompt_layer::PromptLayerBuilder;
 pub use provider_tools::{ProviderToolsets, ToolAdjustment};
+pub use agent::realtime::{
+    Heartbeat, HeartbeatState, RealtimeConfig, SensorContextInjector, SensorSnapshot,
+};
 pub use recorder::{BlackBoxRecorder, RecordEntry};
 pub use sandbox::{Sandbox, SandboxConfig, SandboxMode, create_sandbox};
 pub use session::{SessionLimits, SessionState, SessionStateHandle, SessionUsage};
