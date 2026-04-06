@@ -10,7 +10,10 @@ use serde::Deserialize;
 use tokio::time::timeout;
 
 use super::{Tool, ToolResult};
-use crate::policy::{CommandPolicy, Decision, SafePolicy};
+use crate::policy::{
+    ApprovalResponse, CommandPolicy, Decision, DenyApprover, PermissionApprover, PermissionRequest,
+    SafePolicy,
+};
 use crate::sandbox::{NoSandbox, Sandbox};
 
 /// Tool for executing shell commands.
@@ -21,6 +24,10 @@ pub struct ShellTool {
     cwd: std::path::PathBuf,
     /// Policy for command approval.
     policy: Arc<dyn CommandPolicy>,
+    /// Approver invoked when policy returns [`Decision::Ask`].
+    /// Defaults to [`DenyApprover`] so existing call sites with no operator
+    /// wired up keep their previous "Ask = Deny" behavior.
+    approver: Arc<dyn PermissionApprover>,
     /// Sandbox for command isolation.
     sandbox: Box<dyn Sandbox>,
 }
@@ -32,6 +39,7 @@ impl ShellTool {
             timeout: Duration::from_secs(120),
             cwd: cwd.into(),
             policy: Arc::new(SafePolicy::default()),
+            approver: Arc::new(DenyApprover),
             sandbox: Box::new(NoSandbox),
         }
     }
@@ -45,6 +53,13 @@ impl ShellTool {
     /// Set a custom command policy.
     pub fn with_policy(mut self, policy: Arc<dyn CommandPolicy>) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Set a custom permission approver, used when [`CommandPolicy::check`]
+    /// returns [`Decision::Ask`]. The default is [`DenyApprover`].
+    pub fn with_approver(mut self, approver: Arc<dyn PermissionApprover>) -> Self {
+        self.approver = approver;
         self
     }
 
@@ -112,15 +127,29 @@ impl Tool for ShellTool {
                 });
             }
             Decision::Ask => {
-                tracing::warn!(command = %input.command, "command requires approval — denied (no interactive approval available)");
-                return Ok(ToolResult {
-                    output: format!(
-                        "Command requires approval and was denied: {}\n\nThis command matches a potentially dangerous pattern (e.g. sudo, rm -rf, git push --force). It cannot be executed without interactive approval.",
-                        input.command
-                    ),
-                    success: false,
-                    ..Default::default()
-                });
+                let request = PermissionRequest {
+                    tool: "shell".to_string(),
+                    action: input.command.clone(),
+                    reason: "command matches a policy 'ask' pattern (e.g. sudo, rm -rf, git push --force)"
+                        .to_string(),
+                };
+                let response = self.approver.approve(request).await;
+                match response {
+                    ApprovalResponse::Allow | ApprovalResponse::AllowAlways => {
+                        tracing::info!(command = %input.command, ?response, "command approved by operator");
+                    }
+                    ApprovalResponse::Deny => {
+                        tracing::warn!(command = %input.command, "command requires approval — operator denied");
+                        return Ok(ToolResult {
+                            output: format!(
+                                "Command requires approval and was denied: {}\n\nThis command matches a potentially dangerous pattern (e.g. sudo, rm -rf, git push --force).",
+                                input.command
+                            ),
+                            success: false,
+                            ..Default::default()
+                        });
+                    }
+                }
             }
             Decision::Allow => {}
         }
@@ -300,12 +329,40 @@ mod tests {
     #[tokio::test]
     async fn test_ask_command_denied_without_approval() {
         let tool = ShellTool::new(std::env::temp_dir());
-        // sudo triggers Ask, which must be denied (no interactive approval)
+        // sudo triggers Ask, which the default DenyApprover converts into a denial.
         let result = tool
             .execute(&serde_json::json!({"command": "sudo ls"}))
             .await
             .unwrap();
         assert!(!result.success);
         assert!(result.output.contains("requires approval"));
+    }
+
+    #[tokio::test]
+    async fn test_ask_command_executes_when_approver_allows() {
+        use crate::policy::AllowAllApprover;
+        // Use a command that triggers Ask (`sudo` is in the ask list) but is
+        // syntactically harmless even if `sudo` is not installed: we only care
+        // that we made it past the approval gate, not the exit code.
+        // To avoid depending on `sudo` being available, use `git push --force`,
+        // which is also in the ask list, against an empty cwd — git will fail
+        // with a non-zero exit, but that failure proves the approval gate let
+        // the command through to actual execution.
+        let tmp = tempfile::tempdir().unwrap();
+        let tool = ShellTool::new(tmp.path()).with_approver(Arc::new(AllowAllApprover));
+        let result = tool
+            .execute(&serde_json::json!({
+                "command": "git push --force origin nonexistent-branch"
+            }))
+            .await
+            .unwrap();
+        // The approval gate must NOT short-circuit with the "requires approval"
+        // error message. The actual command will fail (no git repo) but that's
+        // the *executor's* failure, not the approver's.
+        assert!(
+            !result.output.contains("requires approval"),
+            "approver should have allowed the command past the gate, output was: {}",
+            result.output,
+        );
     }
 }
