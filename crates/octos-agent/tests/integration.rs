@@ -3,11 +3,52 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use octos_agent::{Agent, AgentConfig, ToolRegistry};
+use octos_agent::{Agent, AgentConfig, ProgressEvent, ProgressReporter, ToolRegistry};
 use octos_core::{AgentId, Message, ToolCall};
 use octos_llm::{ChatConfig, ChatResponse, LlmProvider, StopReason, TokenUsage, ToolSpec};
 use octos_memory::EpisodeStore;
 use tempfile::TempDir;
+
+/// Reporter that records every event for assertions in tests.
+struct RecordingReporter {
+    events: Mutex<Vec<ProgressEvent>>,
+}
+
+impl RecordingReporter {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn cost_updates(&self) -> Vec<(u32, u32, Option<f64>, Option<f64>)> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                ProgressEvent::CostUpdate {
+                    session_input_tokens,
+                    session_output_tokens,
+                    response_cost,
+                    session_cost,
+                } => Some((
+                    *session_input_tokens,
+                    *session_output_tokens,
+                    *response_cost,
+                    *session_cost,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl ProgressReporter for RecordingReporter {
+    fn report(&self, event: ProgressEvent) {
+        self.events.lock().unwrap().push(event);
+    }
+}
 
 /// Mock LLM provider that returns scripted responses in FIFO order.
 struct MockLlmProvider {
@@ -249,4 +290,71 @@ async fn test_context_trimming() {
         .await
         .unwrap();
     assert_eq!(resp.content, "OK");
+}
+
+#[tokio::test]
+async fn test_cost_update_accumulates_across_iterations() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
+
+    // Two-iteration loop: tool call (200/100), then end turn (300/80).
+    // Mirrors test_agent_tool_call_loop, which already asserts the
+    // accumulated totals reach 500/180.
+    let responses = vec![
+        tool_use(
+            vec![ToolCall {
+                id: "call_1".into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "hello.txt"}),
+                metadata: None,
+            }],
+            200,
+            100,
+        ),
+        end_turn("The file contains: world", 300, 80),
+    ];
+
+    let reporter = Arc::new(RecordingReporter::new());
+    let agent = setup(responses, &dir).await.with_reporter(reporter.clone());
+
+    let _ = agent
+        .process_message("What's in hello.txt?", &[], vec![])
+        .await
+        .unwrap();
+
+    let updates = reporter.cost_updates();
+
+    // One CostUpdate per LLM call.
+    assert_eq!(updates.len(), 2, "expected one CostUpdate per LLM round");
+
+    // Session totals must be monotonically non-decreasing.
+    for window in updates.windows(2) {
+        let (prev_in, prev_out, _, _) = window[0];
+        let (next_in, next_out, _, _) = window[1];
+        assert!(
+            next_in >= prev_in,
+            "session_input_tokens must be monotonic ({prev_in} -> {next_in})"
+        );
+        assert!(
+            next_out >= prev_out,
+            "session_output_tokens must be monotonic ({prev_out} -> {next_out})"
+        );
+    }
+
+    // First snapshot reflects only the first response.
+    assert_eq!(updates[0].0, 200);
+    assert_eq!(updates[0].1, 100);
+
+    // Final snapshot equals the sum of both responses (must match the
+    // ProcessMessage return value asserted in test_agent_tool_call_loop).
+    let (final_in, final_out, _, _) = *updates.last().unwrap();
+    assert_eq!(final_in, 500);
+    assert_eq!(final_out, 180);
+
+    // mock-model has no pricing entry, so cost fields are None — the
+    // event itself is still emitted (this is the contract we care about).
+    for (_, _, response_cost, session_cost) in &updates {
+        assert!(response_cost.is_none());
+        assert!(session_cost.is_none());
+    }
 }

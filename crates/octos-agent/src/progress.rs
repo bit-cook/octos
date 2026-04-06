@@ -109,6 +109,9 @@ pub struct ConsoleReporter {
     verbose: bool,
     /// Buffered stdout writer for streaming chunks.
     stdout: std::sync::Mutex<std::io::BufWriter<std::io::Stdout>>,
+    /// Last observed cost snapshot (session totals + cumulative cost).
+    /// Used to print a final cost line on TaskCompleted even when verbose is off.
+    last_cost: std::sync::Mutex<Option<(u32, u32, Option<f64>)>>,
 }
 
 impl Default for ConsoleReporter {
@@ -124,6 +127,7 @@ impl ConsoleReporter {
             use_colors: true,
             verbose: false,
             stdout: std::sync::Mutex::new(std::io::BufWriter::new(std::io::stdout())),
+            last_cost: std::sync::Mutex::new(None),
         }
     }
 
@@ -317,6 +321,23 @@ impl ProgressReporter for ConsoleReporter {
                 } else {
                     println!("{} after {} iterations", self.red("✗ Failed"), iterations);
                 }
+                // Always show final cost summary, even when not verbose, so users
+                // know what the run cost without having to opt into per-call logging.
+                if let Ok(last) = self.last_cost.lock()
+                    && let Some((input, output, cost)) = *last
+                {
+                    let cost_str = match cost {
+                        Some(c) => format!("${:.4}", c),
+                        None => "N/A".to_string(),
+                    };
+                    println!(
+                        "  {} {} in / {} out | Cost: {}",
+                        self.dim("Tokens:"),
+                        input,
+                        output,
+                        cost_str,
+                    );
+                }
             }
             ProgressEvent::TaskInterrupted { iterations } => {
                 println!();
@@ -384,6 +405,9 @@ impl ProgressReporter for ConsoleReporter {
                 session_cost,
                 ..
             } => {
+                if let Ok(mut last) = self.last_cost.lock() {
+                    *last = Some((session_input_tokens, session_output_tokens, session_cost));
+                }
                 if self.verbose {
                     let cost_str = match session_cost {
                         Some(c) => format!("${:.4}", c),

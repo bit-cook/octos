@@ -216,10 +216,12 @@ impl Agent {
                 t.output_tokens
                     .store(total_usage.output_tokens, Ordering::Relaxed);
             }
+            // Emit a cost snapshot once per LLM round so consumers see live
+            // updates during long tool-use loops, not just at terminal stop.
+            self.emit_cost_update(&total_usage, &response.usage);
 
             match response.stop_reason {
                 StopReason::EndTurn | StopReason::StopSequence => {
-                    self.emit_cost_update(&total_usage, &response.usage);
                     let new_start = (1 + history.len()).min(messages.len());
                     return Ok(ConversationResponse {
                         content: response.content.unwrap_or_default(),
@@ -262,7 +264,6 @@ impl Agent {
                     }
                 }
                 StopReason::MaxTokens => {
-                    self.emit_cost_update(&total_usage, &response.usage);
                     let new_start = (1 + history.len()).min(messages.len());
                     return Ok(ConversationResponse {
                         content: response.content.unwrap_or_default(),
@@ -276,7 +277,6 @@ impl Agent {
                 StopReason::ContentFiltered => {
                     // After retries in call_llm_with_hooks, content is still filtered.
                     // Return a user-visible message instead of empty content.
-                    self.emit_cost_update(&total_usage, &response.usage);
                     warn!("content filtered by provider safety/moderation after retries");
                     let new_start = (1 + history.len()).min(messages.len());
                     return Ok(ConversationResponse {
@@ -353,6 +353,9 @@ impl Agent {
                     .await?;
                 total_usage.input_tokens += response.usage.input_tokens;
                 total_usage.output_tokens += response.usage.output_tokens;
+                // Emit a cost snapshot once per LLM round (see process_message
+                // for the same rationale).
+                self.emit_cost_update(&total_usage, &response.usage);
 
                 let tool_names: Vec<&str> = response
                     .tool_calls
@@ -421,7 +424,6 @@ impl Agent {
                             }
                         }
 
-                        self.emit_cost_update(&total_usage, &response.usage);
                         self.reporter().report(ProgressEvent::TaskCompleted {
                             success: true,
                             iterations: iteration,
@@ -449,7 +451,6 @@ impl Agent {
                         .await?;
                     }
                     StopReason::MaxTokens => {
-                        self.emit_cost_update(&total_usage, &response.usage);
                         self.reporter().report(ProgressEvent::TaskCompleted {
                             success: false,
                             iterations: iteration,
@@ -459,7 +460,6 @@ impl Agent {
                     }
                     StopReason::ContentFiltered => {
                         warn!("content filtered by provider safety/moderation in task");
-                        self.emit_cost_update(&total_usage, &response.usage);
                         self.reporter().report(ProgressEvent::TaskCompleted {
                             success: false,
                             iterations: iteration,
