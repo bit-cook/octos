@@ -372,13 +372,14 @@ async fn test_run_task_emits_idle_notification_on_end_turn() {
     let tools = ToolRegistry::with_builtins(dir.path());
     let memory = Arc::new(EpisodeStore::open(dir.path().join(".octos")).await.unwrap());
 
+    use octos_agent::MailboxBinding;
     let mailbox: Arc<dyn MailboxBackend> = Arc::new(InProcessMailbox::new());
     let agent = Agent::new(AgentId::new("subagent-1"), llm, tools, memory)
         .with_config(AgentConfig {
             save_episodes: false,
             ..Default::default()
         })
-        .with_mailbox(mailbox.clone(), "leader");
+        .with_mailbox(MailboxBinding::new(mailbox.clone(), "leader"));
 
     let task = Task::new(
         TaskKind::Code {

@@ -18,15 +18,15 @@
 //! implement four methods.
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use eyre::{Result, WrapErr};
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 /// Type tag for messages flowing through the mailbox. Mirrors OpenHarness's
 /// MessageType enum so the wire format stays compatible if we ever bridge
@@ -44,9 +44,6 @@ pub enum MailboxMessageType {
     /// Worker has finished its turn and has nothing else to do — coordinator
     /// can reassign or shut it down. Used by #297.
     IdleNotification,
-    /// Coordinator-driven shutdown. Workers must drain in-flight work and
-    /// exit.
-    Shutdown,
 }
 
 /// One message exchanged between swarm agents.
@@ -63,14 +60,13 @@ pub struct MailboxMessage {
     pub timestamp_ms: u64,
 }
 
-/// Process-local monotonic counter used to disambiguate messages created in
-/// the same wall-clock millisecond. Combined with the timestamp prefix this
-/// gives a total ordering of message IDs that matches creation order, which
-/// `MailboxBackend` implementations rely on to deliver in send order.
-static MESSAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
 impl MailboxMessage {
     /// Convenience constructor that fills in `id` and `timestamp_ms`.
+    ///
+    /// IDs are UUID v7 strings so their lexicographic order matches
+    /// creation time — `MailboxBackend` implementations rely on this to
+    /// deliver messages in send order via prefix range scans. UUID v7 is
+    /// the repo's standard temporally-sortable ID (see `octos_core::TaskId`).
     pub fn new(
         kind: MailboxMessageType,
         sender: impl Into<String>,
@@ -81,14 +77,8 @@ impl MailboxMessage {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
-        // Lexicographic-sortable ID: 13-digit zero-padded ms + 16-hex
-        // monotonic counter. The counter guarantees stable ordering even
-        // when many messages are created in the same millisecond, so the
-        // file-backed backends can use the ID as a sort key directly.
-        let seq = MESSAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let id = format!("{now_ms:013}-{seq:016x}");
         Self {
-            id,
+            id: Uuid::now_v7().to_string(),
             kind,
             sender: sender.into(),
             recipient: recipient.into(),
@@ -186,8 +176,6 @@ const MAILBOX_TABLE: TableDefinition<&str, &str> = TableDefinition::new("mailbox
 /// recipient on startup.
 pub struct RedbMailbox {
     db: Arc<Database>,
-    #[allow(dead_code)]
-    path: PathBuf,
 }
 
 impl RedbMailbox {
@@ -199,9 +187,8 @@ impl RedbMailbox {
             .await
             .wrap_err("creating mailbox directory")?;
         let db_path = dir.join("mailbox.redb");
-        let path_for_open = db_path.clone();
         let db = tokio::task::spawn_blocking(move || -> Result<Database> {
-            let db = Database::create(&path_for_open).wrap_err("opening mailbox redb")?;
+            let db = Database::create(&db_path).wrap_err("opening mailbox redb")?;
             // Initialize the table so empty-mailbox `list` calls don't fail.
             let write_txn = db.begin_write()?;
             {
@@ -211,10 +198,7 @@ impl RedbMailbox {
             Ok(db)
         })
         .await??;
-        Ok(Self {
-            db: Arc::new(db),
-            path: db_path,
-        })
+        Ok(Self { db: Arc::new(db) })
     }
 
     fn make_key(recipient: &str, message_id: &str) -> String {
@@ -258,44 +242,44 @@ impl MailboxBackend for RedbMailbox {
         validate_recipient(recipient)?;
         let db = self.db.clone();
         let prefix = format!("{recipient}/");
-        let prefix_clone = prefix.clone();
-        let result =
-            tokio::task::spawn_blocking(move || -> Result<Option<(String, MailboxMessage)>> {
-                // Read the smallest key with the given prefix.
-                let read_txn = db.begin_read()?;
-                let table = read_txn.open_table(MAILBOX_TABLE)?;
-                // Range scan: from prefix to prefix+\u{FFFD} (well above any valid key).
-                let upper = format!("{prefix_clone}\u{FFFD}");
-                let mut iter = table.range(prefix_clone.as_str()..upper.as_str())?;
-                let Some(entry) = iter.next() else {
-                    return Ok(None);
-                };
-                let (key, value) = entry?;
-                let key_owned = key.value().to_string();
-                let msg: MailboxMessage = serde_json::from_str(value.value())
-                    .wrap_err("deserializing mailbox message")?;
-                Ok(Some((key_owned, msg)))
-            })
-            .await??;
-
-        let Some((key, msg)) = result else {
-            return Ok(None);
-        };
-
-        // Delete the message we just read so the next recv() advances.
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || -> Result<()> {
+        tokio::task::spawn_blocking(move || -> Result<Option<MailboxMessage>> {
+            // Single write transaction: read the oldest message for this
+            // recipient, delete it, commit. Atomic with respect to other
+            // writers and half the spawn_blocking round-trips of a
+            // read-then-write split.
             let write_txn = db.begin_write()?;
-            {
+            let found: Option<(String, MailboxMessage)> = {
+                let table = write_txn.open_table(MAILBOX_TABLE)?;
+                // Unbounded upper range + prefix check avoids the previous
+                // `prefix..prefix+\u{FFFD}` trick, which was only correct as
+                // long as keys stayed ASCII-only.
+                let mut iter = table.range(prefix.as_str()..)?;
+                match iter.next() {
+                    Some(entry) => {
+                        let (k, v) = entry?;
+                        if k.value().starts_with(&prefix) {
+                            let key = k.value().to_string();
+                            let msg: MailboxMessage = serde_json::from_str(v.value())
+                                .wrap_err("deserializing mailbox message")?;
+                            Some((key, msg))
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                }
+            };
+            let msg = if let Some((key, msg)) = found {
                 let mut table = write_txn.open_table(MAILBOX_TABLE)?;
                 table.remove(key.as_str())?;
-            }
+                Some(msg)
+            } else {
+                None
+            };
             write_txn.commit()?;
-            Ok(())
+            Ok(msg)
         })
-        .await??;
-
-        Ok(Some(msg))
+        .await?
     }
 
     async fn ack(&self, _message_id: &str) -> Result<()> {
@@ -308,13 +292,15 @@ impl MailboxBackend for RedbMailbox {
         validate_recipient(recipient)?;
         let db = self.db.clone();
         let prefix = format!("{recipient}/");
-        let upper = format!("{prefix}\u{FFFD}");
         let messages = tokio::task::spawn_blocking(move || -> Result<Vec<MailboxMessage>> {
             let read_txn = db.begin_read()?;
             let table = read_txn.open_table(MAILBOX_TABLE)?;
             let mut out = Vec::new();
-            for entry in table.range(prefix.as_str()..upper.as_str())? {
-                let (_, value) = entry?;
+            for entry in table.range(prefix.as_str()..)? {
+                let (key, value) = entry?;
+                if !key.value().starts_with(&prefix) {
+                    break;
+                }
                 let msg: MailboxMessage = serde_json::from_str(value.value())
                     .wrap_err("deserializing mailbox message")?;
                 out.push(msg);
@@ -426,6 +412,9 @@ mod tests {
 
     #[tokio::test]
     async fn message_ids_sort_chronologically() {
+        // UUID v7 encodes a 48-bit ms timestamp in the leading bits, so
+        // IDs created at least 1ms apart sort chronologically when
+        // compared as strings.
         let m1 = MailboxMessage::new(
             MailboxMessageType::UserMessage,
             "s",

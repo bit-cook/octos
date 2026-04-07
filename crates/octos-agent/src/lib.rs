@@ -35,8 +35,8 @@ pub mod turn;
 
 pub use agent::{
     Agent, AgentConfig, ConversationResponse, DEFAULT_SESSION_TIMEOUT_SECS,
-    DEFAULT_TOOL_TIMEOUT_SECS, DEFAULT_WORKER_PROMPT, MAX_TOOL_TIMEOUT_SECS, TASK_REPORTER,
-    TokenTracker,
+    DEFAULT_TOOL_TIMEOUT_SECS, DEFAULT_WORKER_PROMPT, MAX_TOOL_TIMEOUT_SECS, MailboxBinding,
+    TASK_REPORTER, TokenTracker,
 };
 pub use event_bus::{EventBus, EventSubscriber};
 pub use exec_env::{DockerEnvironment, ExecEnvironment, ExecOutput, LocalEnvironment};

@@ -239,11 +239,14 @@ impl Agent {
         ))
     }
 
+    /// Emit a cost update event for the current round and return the
+    /// cumulative session cost so callers (like `run_task`) can feed it
+    /// into the final `TaskCompleted` event without looking pricing up twice.
     pub(super) fn emit_cost_update(
         &self,
         total_usage: &TokenUsage,
         response_usage: &octos_llm::TokenUsage,
-    ) {
+    ) -> Option<f64> {
         let pricing = octos_llm::pricing::model_pricing(self.llm.model_id());
         let response_cost =
             pricing.map(|p| p.cost(response_usage.input_tokens, response_usage.output_tokens));
@@ -255,6 +258,7 @@ impl Agent {
             response_cost,
             session_cost,
         });
+        session_cost
     }
 
     pub(super) fn response_to_message(&self, response: &ChatResponse) -> Message {

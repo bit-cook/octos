@@ -96,13 +96,13 @@ impl PermissionApprover for AllowAllApprover {
 ///
 /// Cache keys are `(tool, action)` pairs. The cache lives for the lifetime of
 /// the wrapper instance — typically one chat/session.
-pub struct SessionCachedApprover<A: PermissionApprover> {
-    inner: A,
+pub struct SessionCachedApprover {
+    inner: std::sync::Arc<dyn PermissionApprover>,
     remembered: Mutex<std::collections::HashSet<(String, String)>>,
 }
 
-impl<A: PermissionApprover> SessionCachedApprover<A> {
-    pub fn new(inner: A) -> Self {
+impl SessionCachedApprover {
+    pub fn new(inner: std::sync::Arc<dyn PermissionApprover>) -> Self {
         Self {
             inner,
             remembered: Mutex::new(std::collections::HashSet::new()),
@@ -117,7 +117,7 @@ impl<A: PermissionApprover> SessionCachedApprover<A> {
 }
 
 #[async_trait]
-impl<A: PermissionApprover> PermissionApprover for SessionCachedApprover<A> {
+impl PermissionApprover for SessionCachedApprover {
     async fn approve(&self, request: PermissionRequest) -> ApprovalResponse {
         let key = (request.tool.clone(), request.action.clone());
         if self.remembered.lock().unwrap().contains(&key) {
@@ -383,7 +383,7 @@ mod tests {
     async fn session_cache_short_circuits_after_allow_always() {
         // Script: first call → AllowAlways, second call would panic if reached.
         let scripted = ScriptedApprover::new(vec![ApprovalResponse::AllowAlways]);
-        let approver = SessionCachedApprover::new(scripted);
+        let approver = SessionCachedApprover::new(std::sync::Arc::new(scripted));
 
         // First call: hits inner, gets AllowAlways, cached.
         let r1 = approver.approve(req("sudo ls")).await;
@@ -401,7 +401,7 @@ mod tests {
         // Script returns Allow twice — both calls must reach the inner approver.
         let scripted =
             ScriptedApprover::new(vec![ApprovalResponse::Allow, ApprovalResponse::Allow]);
-        let approver = SessionCachedApprover::new(scripted);
+        let approver = SessionCachedApprover::new(std::sync::Arc::new(scripted));
 
         approver.approve(req("sudo ls")).await;
         approver.approve(req("sudo ls")).await;
@@ -414,7 +414,7 @@ mod tests {
         // AllowAlways for `sudo ls` must NOT auto-approve `sudo rm -rf /tmp/foo`.
         let scripted =
             ScriptedApprover::new(vec![ApprovalResponse::Deny, ApprovalResponse::AllowAlways]);
-        let approver = SessionCachedApprover::new(scripted);
+        let approver = SessionCachedApprover::new(std::sync::Arc::new(scripted));
 
         // First action: AllowAlways (popped from end of vec).
         assert_eq!(

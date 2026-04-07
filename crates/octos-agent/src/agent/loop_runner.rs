@@ -354,9 +354,7 @@ impl Agent {
                     .await?;
                 total_usage.input_tokens += response.usage.input_tokens;
                 total_usage.output_tokens += response.usage.output_tokens;
-                // Emit a cost snapshot once per LLM round (see process_message
-                // for the same rationale).
-                self.emit_cost_update(&total_usage, &response.usage);
+                let session_cost = self.emit_cost_update(&total_usage, &response.usage);
 
                 let tool_names: Vec<&str> = response
                     .tool_calls
@@ -429,6 +427,9 @@ impl Agent {
                             success: true,
                             iterations: iteration,
                             duration: task_start.elapsed(),
+                            session_input_tokens: total_usage.input_tokens,
+                            session_output_tokens: total_usage.output_tokens,
+                            session_cost,
                         });
 
                         info!(
@@ -439,7 +440,7 @@ impl Agent {
                             duration_ms = task_start.elapsed().as_millis() as u64,
                             "task completed"
                         );
-                        self.emit_idle_notification(&task.id, "end_turn", iteration)
+                        self.emit_idle_notification(&task.id, StopReason::EndTurn, iteration)
                             .await;
                         return Ok(self.build_result(&response, total_usage, files_modified));
                     }
@@ -458,13 +459,16 @@ impl Agent {
                             success: false,
                             iterations: iteration,
                             duration: task_start.elapsed(),
+                            session_input_tokens: total_usage.input_tokens,
+                            session_output_tokens: total_usage.output_tokens,
+                            session_cost,
                         });
                         // MaxTokens with no pending tool calls is also an idle
-                        // exit per #297: the worker has nothing else to do,
-                        // even though the cause was a budget hit rather than
-                        // natural completion. The leader can decide what to
-                        // requeue based on the reason field.
-                        self.emit_idle_notification(&task.id, "max_tokens", iteration)
+                        // exit: the worker has nothing else to do, even though
+                        // the cause was a budget hit rather than natural
+                        // completion. The leader can decide what to requeue
+                        // based on the reason field.
+                        self.emit_idle_notification(&task.id, StopReason::MaxTokens, iteration)
                             .await;
                         return Ok(self.build_result(&response, total_usage, files_modified));
                     }
@@ -474,6 +478,9 @@ impl Agent {
                             success: false,
                             iterations: iteration,
                             duration: task_start.elapsed(),
+                            session_input_tokens: total_usage.input_tokens,
+                            session_output_tokens: total_usage.output_tokens,
+                            session_cost,
                         });
                         let mut result = self.build_result(&response, total_usage, files_modified);
                         if result.output.is_empty() {
@@ -495,7 +502,7 @@ impl Agent {
     async fn emit_idle_notification(
         &self,
         last_task_id: &octos_core::TaskId,
-        reason: &str,
+        reason: StopReason,
         iterations: u32,
     ) {
         let Some(binding) = self.mailbox.as_ref() else {

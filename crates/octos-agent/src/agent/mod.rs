@@ -150,6 +150,18 @@ pub struct MailboxBinding {
     pub leader: String,
 }
 
+impl MailboxBinding {
+    pub fn new(
+        backend: Arc<dyn crate::swarm::mailbox::MailboxBackend>,
+        leader: impl Into<String>,
+    ) -> Self {
+        Self {
+            backend,
+            leader: leader.into(),
+        }
+    }
+}
+
 impl Agent {
     /// Create a new agent.
     pub fn new(
@@ -246,15 +258,8 @@ impl Agent {
     /// `run_task` worker loop emits `IdleNotification` messages on natural
     /// exit so the leader/coordinator can schedule follow-up work without
     /// polling. See [`MailboxBinding`] and the `swarm::mailbox` module.
-    pub fn with_mailbox(
-        mut self,
-        backend: Arc<dyn crate::swarm::mailbox::MailboxBackend>,
-        leader: impl Into<String>,
-    ) -> Self {
-        self.mailbox = Some(MailboxBinding {
-            backend,
-            leader: leader.into(),
-        });
+    pub fn with_mailbox(mut self, binding: MailboxBinding) -> Self {
+        self.mailbox = Some(binding);
         self
     }
 
