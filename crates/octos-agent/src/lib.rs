@@ -28,6 +28,7 @@ mod sanitize;
 pub mod session;
 pub mod skills;
 pub mod steering;
+pub mod swarm;
 pub mod task_supervisor;
 pub mod tools;
 pub mod turn;

@@ -14,6 +14,22 @@ use tracing::{info, warn};
 
 use super::{Tool, ToolPolicy, ToolRegistry, ToolResult};
 use crate::Agent;
+use crate::swarm::worktree;
+
+/// Filesystem isolation strategy for spawned sub-agent workers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorkerIsolation {
+    /// All workers share the parent's working directory. Fast, no setup, but
+    /// concurrent edits to the same file race. Default for backward compat.
+    #[default]
+    Shared,
+    /// Each worker is allocated its own git worktree under
+    /// `<parent>/.octos/work/<agent_id>/` checked out on a fresh
+    /// `octos/worker/<agent_id>` branch. Requires the parent to be a git repo;
+    /// falls back to [`WorkerIsolation::Shared`] (with a warning) if worktree
+    /// allocation fails for any reason.
+    Worktree,
+}
 
 /// Callback for delivering background task results directly to the session actor.
 /// Returns `true` if the result was delivered, `false` if the actor is dead
@@ -42,6 +58,8 @@ pub struct SpawnTool {
     plugin_dirs: Vec<PathBuf>,
     /// Extra environment variables for plugin processes.
     plugin_extra_env: Vec<(String, String)>,
+    /// Filesystem isolation strategy for spawned workers.
+    worker_isolation: WorkerIsolation,
 }
 
 impl SpawnTool {
@@ -64,6 +82,7 @@ impl SpawnTool {
             background_result_sender: None,
             plugin_dirs: Vec::new(),
             plugin_extra_env: Vec::new(),
+            worker_isolation: WorkerIsolation::default(),
         }
     }
 
@@ -89,6 +108,7 @@ impl SpawnTool {
             background_result_sender: None,
             plugin_dirs: Vec::new(),
             plugin_extra_env: Vec::new(),
+            worker_isolation: WorkerIsolation::default(),
         }
     }
 
@@ -126,6 +146,13 @@ impl SpawnTool {
     ) -> Self {
         self.plugin_dirs = dirs;
         self.plugin_extra_env = extra_env;
+        self
+    }
+
+    /// Choose the filesystem isolation strategy for spawned workers.
+    /// See [`WorkerIsolation`] for the trade-offs.
+    pub fn with_isolation(mut self, isolation: WorkerIsolation) -> Self {
+        self.worker_isolation = isolation;
         self
     }
 
@@ -172,6 +199,37 @@ impl SpawnTool {
     pub fn set_context(&self, channel: &str, chat_id: &str) {
         *self.origin.lock().unwrap_or_else(|e| e.into_inner()) =
             (channel.to_string(), chat_id.to_string());
+    }
+
+    /// Decide where a worker should run based on the configured isolation
+    /// strategy. Always returns a usable path; on Worktree-mode failures we
+    /// log a warning and fall back to the parent's `working_dir` so the
+    /// worker can still make progress.
+    async fn resolve_worker_working_dir(&self, slug: &str) -> PathBuf {
+        match self.worker_isolation {
+            WorkerIsolation::Shared => self.working_dir.clone(),
+            WorkerIsolation::Worktree => {
+                match worktree::allocate_worktree(&self.working_dir, slug).await {
+                    Ok(info) => {
+                        info!(
+                            slug,
+                            path = %info.path.display(),
+                            branch = %info.branch,
+                            "allocated worktree for sub-agent"
+                        );
+                        info.path
+                    }
+                    Err(e) => {
+                        warn!(
+                            slug,
+                            error = %e,
+                            "worktree allocation failed; falling back to shared working_dir"
+                        );
+                        self.working_dir.clone()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -333,11 +391,17 @@ impl Tool for SpawnTool {
             "spawning subagent"
         );
 
+        // Resolve the worker's working directory according to the isolation
+        // policy. On Worktree mode we attempt to allocate a fresh git worktree
+        // and fall back to the parent dir on any failure (non-git repo, slug
+        // collision, missing git binary) so that workers always make progress.
+        let worker_working_dir = self.resolve_worker_working_dir(&worker_id.0).await;
+
         let sub_llm = self.resolve_sub_provider(input.model.as_deref(), input.context_window)?;
 
         if is_sync {
             // Sync mode: run subagent inline and return the result directly
-            let mut tools = ToolRegistry::with_builtins(&self.working_dir);
+            let mut tools = ToolRegistry::with_builtins(&worker_working_dir);
             // Load plugin tools so subagents can use fm_tts, etc.
             if !self.plugin_dirs.is_empty() {
                 let _ = crate::plugins::PluginLoader::load_into(
@@ -377,7 +441,7 @@ impl Tool for SpawnTool {
                     files: vec![],
                 },
                 TaskContext {
-                    working_dir: self.working_dir.clone(),
+                    working_dir: worker_working_dir.clone(),
                     ..Default::default()
                 },
             );
@@ -405,7 +469,7 @@ impl Tool for SpawnTool {
                 .clone();
             let llm = sub_llm;
             let memory = self.memory.clone();
-            let working_dir = self.working_dir.clone();
+            let working_dir = worker_working_dir.clone();
             let inbound_tx = self.inbound_tx.clone();
             let wid = worker_id.clone();
             let provider_policy = self.provider_policy.clone();
@@ -545,6 +609,7 @@ mod tests {
             background_result_sender: None,
             plugin_dirs: Vec::new(),
             plugin_extra_env: Vec::new(),
+            worker_isolation: WorkerIsolation::default(),
         };
 
         assert_eq!(tool.worker_count.load(Ordering::SeqCst), 0);
@@ -555,6 +620,87 @@ mod tests {
 
         // Worker count should not increment on invalid input
         assert_eq!(tool.worker_count.load(Ordering::SeqCst), 0);
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    async fn make_spawn_tool(working_dir: PathBuf, isolation: WorkerIsolation) -> SpawnTool {
+        let (in_tx, _in_rx) = tokio::sync::mpsc::channel(16);
+        SpawnTool {
+            llm: Arc::new(MockProvider),
+            memory: Arc::new(create_test_store().await),
+            working_dir,
+            inbound_tx: in_tx,
+            origin: std::sync::Mutex::new(("cli".into(), "test".into())),
+            worker_count: AtomicU32::new(0),
+            provider_policy: None,
+            provider_router: None,
+            worker_prompt: None,
+            background_result_sender: None,
+            plugin_dirs: Vec::new(),
+            plugin_extra_env: Vec::new(),
+            worker_isolation: isolation,
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_isolation_shared_returns_parent_dir() {
+        let parent = tempfile::tempdir().unwrap();
+        let tool = make_spawn_tool(parent.path().to_path_buf(), WorkerIsolation::Shared).await;
+
+        let resolved = tool.resolve_worker_working_dir("subagent-0").await;
+        assert_eq!(resolved, parent.path());
+    }
+
+    #[tokio::test]
+    async fn worker_isolation_worktree_allocates_fresh_dir_under_git_repo() {
+        if !git_available() {
+            return;
+        }
+        let parent = tempfile::tempdir().unwrap();
+        // Bootstrap a real git repo so worktree allocation can succeed.
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(parent.path())
+            .args(["init", "-q"])
+            .output()
+            .await
+            .unwrap();
+        tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(parent.path())
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(["commit", "--allow-empty", "-q", "-m", "init"])
+            .output()
+            .await
+            .unwrap();
+
+        let tool = make_spawn_tool(parent.path().to_path_buf(), WorkerIsolation::Worktree).await;
+        let resolved = tool.resolve_worker_working_dir("subagent-0").await;
+
+        // Resolved path must be inside the worktree subtree, not the parent.
+        assert_ne!(resolved, parent.path());
+        assert!(resolved.starts_with(parent.path().join(".octos").join("work")));
+        assert!(resolved.exists(), "worktree path should exist on disk");
+    }
+
+    #[tokio::test]
+    async fn worker_isolation_worktree_falls_back_to_parent_in_non_git_dir() {
+        let parent = tempfile::tempdir().unwrap();
+        // No git init — allocation must fail and fall back, NOT crash the spawn.
+        let tool = make_spawn_tool(parent.path().to_path_buf(), WorkerIsolation::Worktree).await;
+        let resolved = tool.resolve_worker_working_dir("subagent-0").await;
+        assert_eq!(
+            resolved,
+            parent.path(),
+            "must fall back to parent on non-git dir"
+        );
     }
 
     // Minimal mock provider for testing
