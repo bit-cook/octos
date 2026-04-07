@@ -389,30 +389,30 @@ pub async fn session_messages(
 
     // Try standalone store first (skip for source=full — gateway has the merge logic)
     if !use_full {
-    if let Some(sessions) = &state.sessions {
-        let fetch_count = match offset.checked_add(limit) {
-            Some(n) => n,
-            None => return (StatusCode::BAD_REQUEST, "invalid pagination").into_response(),
-        };
-        let key = SessionKey::new("api", &id);
-        let mut sess = sessions.lock().await;
-        let session = sess.get_or_create(&key).await;
-        let messages: Vec<MessageInfo> = session
-            .get_history(fetch_count)
-            .iter()
-            .skip(offset)
-            .take(limit)
-            .map(|m| MessageInfo {
-                role: m.role.to_string(),
-                content: m.content.clone(),
-                timestamp: m.timestamp.to_rfc3339(),
-            })
-            .collect();
-        if !messages.is_empty() {
-            return Json(messages).into_response();
+        if let Some(sessions) = &state.sessions {
+            let fetch_count = match offset.checked_add(limit) {
+                Some(n) => n,
+                None => return (StatusCode::BAD_REQUEST, "invalid pagination").into_response(),
+            };
+            let key = SessionKey::new("api", &id);
+            let mut sess = sessions.lock().await;
+            let session = sess.get_or_create(&key).await;
+            let messages: Vec<MessageInfo> = session
+                .get_history(fetch_count)
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|m| MessageInfo {
+                    role: m.role.to_string(),
+                    content: m.content.clone(),
+                    timestamp: m.timestamp.to_rfc3339(),
+                })
+                .collect();
+            if !messages.is_empty() {
+                return Json(messages).into_response();
+            }
+            // Fall through to gateway for old sessions
         }
-        // Fall through to gateway for old sessions
-    }
     } // !use_full
 
     // Proxy to gateway (old sessions live there)
@@ -693,8 +693,14 @@ pub async fn list_content_files(
         return (StatusCode::SERVICE_UNAVAILABLE, "no gateway").into_response();
     };
 
-    let dirs_param = params.get("dirs").cloned().unwrap_or_else(|| "research,slides,skill-output".to_string());
-    let mut scan_dirs: Vec<String> = dirs_param.split(',').map(|s| s.trim().to_string()).collect();
+    let dirs_param = params
+        .get("dirs")
+        .cloned()
+        .unwrap_or_else(|| "research,slides,skill-output".to_string());
+    let mut scan_dirs: Vec<String> = dirs_param
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .collect();
 
     // Scan per-user workspace directories that match the requested dirs.
     // Only use original relative dir names — absolute paths from prior
@@ -704,9 +710,13 @@ pub async fn list_content_files(
     if let Ok(entries) = std::fs::read_dir(&users_dir) {
         for entry in entries.flatten() {
             let ws = entry.path().join("workspace");
-            if !ws.exists() { continue; }
+            if !ws.exists() {
+                continue;
+            }
             for dir_name in &requested_dirs {
-                if std::path::Path::new(dir_name.as_str()).is_absolute() { continue; }
+                if std::path::Path::new(dir_name.as_str()).is_absolute() {
+                    continue;
+                }
                 let ws_dir = ws.join(dir_name);
                 if ws_dir.exists() && ws_dir.is_dir() {
                     scan_dirs.push(ws_dir.to_string_lossy().to_string());
@@ -730,24 +740,47 @@ pub async fn list_content_files(
     fn is_output_file(filename: &str) -> bool {
         let lower = filename.to_lowercase();
         // Skip hidden files
-        if lower.starts_with('.') { return false; }
+        if lower.starts_with('.') {
+            return false;
+        }
         // Skip research intermediate files
-        if lower.starts_with('_') { return false; } // _report.md, _search_results.md, _sources.json
+        if lower.starts_with('_') {
+            return false;
+        } // _report.md, _search_results.md, _sources.json
         // Skip intermediates
-        if lower.starts_with("panel-") { return false; }
-        if lower.contains("-ref.") { return false; } // mofa reference images
+        if lower.starts_with("panel-") {
+            return false;
+        }
+        if lower.contains("-ref.") {
+            return false;
+        } // mofa reference images
         // Only keep meaningful output extensions
         matches!(
             lower.rsplit('.').next().unwrap_or(""),
-            "md" | "txt" | "pptx" | "pdf" | "docx" | "xlsx" | "png" | "jpg" | "mp3" | "wav" | "mp4" | "js" | "json"
+            "md" | "txt"
+                | "pptx"
+                | "pdf"
+                | "docx"
+                | "xlsx"
+                | "png"
+                | "jpg"
+                | "mp3"
+                | "wav"
+                | "mp4"
+                | "js"
+                | "json"
         )
     }
 
     fn modified_rfc3339(meta: &std::fs::Metadata) -> String {
-        meta.modified().ok()
+        meta.modified()
+            .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                .map(|dt| dt.to_rfc3339()).unwrap_or_default())
+            .map(|d| {
+                chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default()
+            })
             .unwrap_or_default()
     }
 
@@ -758,19 +791,30 @@ pub async fn list_content_files(
         } else {
             data_dir.join(dir_name.as_str())
         };
-        if !dir_path.exists() { continue; }
+        if !dir_path.exists() {
+            continue;
+        }
         if let Ok(entries) = std::fs::read_dir(&dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let display_dir = if std::path::Path::new(dir_name.as_str()).is_absolute() {
                     // For workspace paths, show "workspace/research"
                     let p = std::path::Path::new(dir_name.as_str());
-                    let parts: Vec<&str> = p.components().rev().take(2).map(|c| c.as_os_str().to_str().unwrap_or("")).collect();
+                    let parts: Vec<&str> = p
+                        .components()
+                        .rev()
+                        .take(2)
+                        .map(|c| c.as_os_str().to_str().unwrap_or(""))
+                        .collect();
                     parts.into_iter().rev().collect::<Vec<_>>().join("/")
                 } else {
                     dir_name.to_string()
                 };
-                let group_name = format!("{}/{}", display_dir, path.file_name().unwrap_or_default().to_string_lossy());
+                let group_name = format!(
+                    "{}/{}",
+                    display_dir,
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                );
                 if path.is_dir() {
                     // For skill-output and slides: scan subdirs for final outputs
                     // For research: skip subdirs (they contain intermediate search results)
@@ -789,8 +833,14 @@ pub async fn list_content_files(
                                 for sub in sub_entries.flatten() {
                                     let sp = sub.path();
                                     if sp.is_file() {
-                                        let filename = sp.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        if !is_output_file(&filename) { continue; }
+                                        let filename = sp
+                                            .file_name()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string();
+                                        if !is_output_file(&filename) {
+                                            continue;
+                                        }
                                         if let Ok(meta) = sp.metadata() {
                                             files.push(ContentFile {
                                                 category: categorize(&filename),
@@ -807,8 +857,14 @@ pub async fn list_content_files(
                         }
                     }
                 } else if path.is_file() {
-                    let filename = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    if !is_output_file(&filename) { continue; }
+                    let filename = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if !is_output_file(&filename) {
+                        continue;
+                    }
                     if let Ok(meta) = path.metadata() {
                         files.push(ContentFile {
                             category: categorize(&filename),
@@ -832,12 +888,23 @@ pub async fn list_content_files(
 
 fn categorize(filename: &str) -> String {
     let lower = filename.to_lowercase();
-    if lower.ends_with(".md") || lower.ends_with(".txt") { "report".into() }
-    else if lower.ends_with(".pptx") || lower.ends_with(".pdf") { "slides".into() }
-    else if lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".webp") { "image".into() }
-    else if lower.ends_with(".mp3") || lower.ends_with(".wav") || lower.ends_with(".ogg") { "audio".into() }
-    else if lower.ends_with(".mp4") || lower.ends_with(".webm") { "video".into() }
-    else { "other".into() }
+    if lower.ends_with(".md") || lower.ends_with(".txt") {
+        "report".into()
+    } else if lower.ends_with(".pptx") || lower.ends_with(".pdf") {
+        "slides".into()
+    } else if lower.ends_with(".png")
+        || lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".webp")
+    {
+        "image".into()
+    } else if lower.ends_with(".mp3") || lower.ends_with(".wav") || lower.ends_with(".ogg") {
+        "audio".into()
+    } else if lower.ends_with(".mp4") || lower.ends_with(".webm") {
+        "video".into()
+    } else {
+        "other".into()
+    }
 }
 
 /// GET /api/status -- server status.

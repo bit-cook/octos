@@ -762,13 +762,17 @@ impl AdaptiveRouter {
                     },
                     context_window: {
                         let v = s.context_window.load(Ordering::Relaxed);
-                        if v > 0 { v } else {
+                        if v > 0 {
+                            v
+                        } else {
                             crate::context::context_window_tokens(s.provider.model_id()) as u64
                         }
                     },
                     max_output: {
                         let v = s.max_output.load(Ordering::Relaxed);
-                        if v > 0 { v } else {
+                        if v > 0 {
+                            v
+                        } else {
                             crate::context::max_output_tokens(s.provider.model_id()) as u64
                         }
                     },
@@ -907,13 +911,19 @@ impl AdaptiveRouter {
         } else {
             0.5 // no data → neutral
         };
-        let live_err_rate = if total > 0 { slot.metrics.error_rate() } else { 0.5 };
+        let live_err_rate = if total > 0 {
+            slot.metrics.error_rate()
+        } else {
+            0.5
+        };
         let blended_err = baseline_err * (1.0 - weight) + live_err_rate * weight;
 
         // ── Quality ──
         // No data = neutral (0.5). Cost is the differentiator, not unobserved quality.
         let ds = slot.ds_output.load(Ordering::Relaxed) as f64;
-        let max_ds = self.slots.iter()
+        let max_ds = self
+            .slots
+            .iter()
             .map(|s| s.ds_output.load(Ordering::Relaxed) as f64)
             .fold(0.0_f64, f64::max);
         let norm_quality = if max_ds > 0.0 && ds > 0.0 {
@@ -924,7 +934,9 @@ impl AdaptiveRouter {
 
         // ── Throughput ──
         let throughput = slot.metrics.throughput();
-        let max_throughput = self.slots.iter()
+        let max_throughput = self
+            .slots
+            .iter()
             .map(|s| s.metrics.throughput())
             .fold(0.0_f64, f64::max);
         let norm_throughput = if max_throughput > 0.0 && throughput > 0.0 {

@@ -649,7 +649,11 @@ impl ActorFactory {
             // which is unreachable from the sandboxed workspace.
             let topic = session_key.topic().unwrap_or("slides");
             let project_name = topic.strip_prefix("slides").unwrap_or("").trim();
-            let project_name = if project_name.is_empty() { "untitled" } else { project_name };
+            let project_name = if project_name.is_empty() {
+                "untitled"
+            } else {
+                project_name
+            };
             crate::project_templates::scaffold_slides_project(&user_workspace, project_name);
 
             // Copy built-in style templates into workspace/styles/ so the
@@ -1132,8 +1136,9 @@ impl SessionActor {
                      /status — show agent status\n\
                      /adaptive — view adaptive routing\n\
                      /reset — reset session state\n\
-                     /help — show this help"
-                ).await;
+                     /help — show this help",
+                )
+                .await;
                 true
             }
         }

@@ -85,8 +85,7 @@ impl ServeCommand {
             // 2. $OCTOS_HOME/config.json or ~/.octos/config.json (data dir)
             // 3. Legacy platform config dir (~/Library/Application Support/octos/ etc.)
             let local_config = cwd.join(".octos").join("config.json");
-            let legacy_config = dirs::config_dir()
-                .map(|d| d.join("octos").join("config.json"));
+            let legacy_config = dirs::config_dir().map(|d| d.join("octos").join("config.json"));
             if local_config.exists() {
                 tracing::info!(path = %local_config.display(), "loading config (project-local)");
                 (Config::from_file(&local_config)?, Some(local_config))
@@ -275,9 +274,13 @@ impl ServeCommand {
             tenant_store: crate::tenant::TenantStore::open(&data_dir)
                 .ok()
                 .map(Arc::new),
-            tunnel_domain: config.tunnel_domain.clone()
+            tunnel_domain: config
+                .tunnel_domain
+                .clone()
                 .or_else(|| std::env::var("TUNNEL_DOMAIN").ok()),
-            frps_server: config.frps_server.clone()
+            frps_server: config
+                .frps_server
+                .clone()
                 .or_else(|| std::env::var("FRPS_SERVER").ok()),
             frps_port: std::env::var("FRPS_PORT").ok().and_then(|p| p.parse().ok()),
             deployment_mode: config.mode.clone(),

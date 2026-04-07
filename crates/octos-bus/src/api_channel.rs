@@ -173,8 +173,11 @@ impl Channel for ApiChannel {
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
-                    let tool_call_id = msg.metadata.get("tool_call_id")
-                        .and_then(|v| v.as_str()).unwrap_or("");
+                    let tool_call_id = msg
+                        .metadata
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     let event = serde_json::json!({
                         "type": "file",
                         "path": path,
@@ -364,13 +367,21 @@ impl ApiChannel {
                 let path_clone = per_user_path.clone();
                 match tokio::task::spawn_blocking(move || {
                     use std::io::Write;
-                    let mut f = std::fs::OpenOptions::new().append(true).open(&per_user_path)?;
+                    let mut f = std::fs::OpenOptions::new()
+                        .append(true)
+                        .open(&per_user_path)?;
                     writeln!(f, "{}", msg_json)?;
                     Ok::<_, std::io::Error>(())
-                }).await {
+                })
+                .await
+                {
                     Ok(Ok(())) => info!(chat_id = %chat_id, "persisted to per-user session"),
-                    Ok(Err(e)) => tracing::warn!(chat_id = %chat_id, path = %path_clone.display(), error = %e, "per-user session write failed"),
-                    Err(e) => tracing::warn!(chat_id = %chat_id, error = %e, "per-user session spawn_blocking failed"),
+                    Ok(Err(e)) => {
+                        tracing::warn!(chat_id = %chat_id, path = %path_clone.display(), error = %e, "per-user session write failed")
+                    }
+                    Err(e) => {
+                        tracing::warn!(chat_id = %chat_id, error = %e, "per-user session spawn_blocking failed")
+                    }
                 }
             }
         } else {
@@ -611,12 +622,20 @@ async fn handle_session_messages(
             // and aren't already in per-user
             for line in content.lines() {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                    let has_media = v.get("media").and_then(|m| m.as_array()).is_some_and(|a| !a.is_empty());
-                    let is_bg = v.get("content").and_then(|c| c.as_str()).is_some_and(|c| c.starts_with('✓') || c.starts_with('✗'));
+                    let has_media = v
+                        .get("media")
+                        .and_then(|m| m.as_array())
+                        .is_some_and(|a| !a.is_empty());
+                    let is_bg = v
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(|c| c.starts_with('✓') || c.starts_with('✗'));
                     if has_media || is_bg {
                         // Check for duplicate by content
                         let content_str = v.get("content").and_then(|c| c.as_str()).unwrap_or("");
-                        if !all_lines.iter().any(|existing| existing.contains(content_str) && !content_str.is_empty()) {
+                        if !all_lines.iter().any(|existing| {
+                            existing.contains(content_str) && !content_str.is_empty()
+                        }) {
                             all_lines.push(line.to_string());
                         }
                     }
@@ -629,8 +648,7 @@ async fn handle_session_messages(
                 let v: serde_json::Value = serde_json::from_str(line).ok()?;
                 let role = v.get("role")?.as_str()?;
                 let content = v.get("content")?.as_str().unwrap_or("");
-                let timestamp =
-                    v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
+                let timestamp = v.get("timestamp").and_then(|t| t.as_str()).unwrap_or("");
                 let media: Vec<String> = v
                     .get("media")
                     .and_then(|m| m.as_array())
@@ -684,8 +702,14 @@ async fn handle_session_messages(
             content: m.content.clone(),
             timestamp: m.timestamp.to_rfc3339(),
             media: m.media.clone(),
-            tool_calls: m.tool_calls.as_ref()
-                .map(|tcs| tcs.iter().filter_map(|tc| serde_json::to_value(tc).ok()).collect())
+            tool_calls: m
+                .tool_calls
+                .as_ref()
+                .map(|tcs| {
+                    tcs.iter()
+                        .filter_map(|tc| serde_json::to_value(tc).ok())
+                        .collect()
+                })
                 .unwrap_or_default(),
         })
         .collect();

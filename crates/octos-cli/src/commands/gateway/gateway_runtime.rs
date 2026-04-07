@@ -1061,8 +1061,14 @@ impl GatewayRuntime {
             plugin_dirs: plugin_dirs_for_spawn.clone(),
             plugin_extra_env: plugin_env.clone(),
             llm_strong: super::profile_factory::build_strong_chain(
-                &config, &config.provider.clone().unwrap_or_else(|| "anthropic".to_string()), false,
-            ).unwrap_or_else(|_| llm_for_compaction.clone()),
+                &config,
+                &config
+                    .provider
+                    .clone()
+                    .unwrap_or_else(|| "anthropic".to_string()),
+                false,
+            )
+            .unwrap_or_else(|_| llm_for_compaction.clone()),
         };
         let profile_factory_builder =
             profile_store
@@ -1483,14 +1489,17 @@ impl GatewayRuntime {
                 // For API channel: send a completion signal so the SSE stream closes
                 // and the web client's assistant message transitions from "streaming" to "complete".
                 if reply_channel == "api" {
-                    let _ = self.agent_handle.send_outbound(octos_core::OutboundMessage {
-                        channel: reply_channel.clone(),
-                        chat_id: reply_chat_id.clone(),
-                        content: String::new(),
-                        reply_to: None,
-                        media: vec![],
-                        metadata: serde_json::json!({"_completion": true}),
-                    }).await;
+                    let _ = self
+                        .agent_handle
+                        .send_outbound(octos_core::OutboundMessage {
+                            channel: reply_channel.clone(),
+                            chat_id: reply_chat_id.clone(),
+                            content: String::new(),
+                            reply_to: None,
+                            media: vec![],
+                            metadata: serde_json::json!({"_completion": true}),
+                        })
+                        .await;
                 }
                 continue;
             }

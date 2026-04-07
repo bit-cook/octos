@@ -380,8 +380,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/health", get(handlers::health));
 
     // Internal endpoint for frps server plugin (no auth — called by frps on localhost)
-    let internal_routes = Router::new()
-        .route("/api/internal/frps-auth", post(frps_plugin::frps_auth));
+    let internal_routes =
+        Router::new().route("/api/internal/frps-auth", post(frps_plugin::frps_auth));
 
     // Unauthenticated routes (static files + auth endpoints + webhook proxy + internal)
     let public = Router::new()

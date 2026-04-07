@@ -489,10 +489,10 @@ pub async fn my_content(
     axum::Extension(identity): axum::Extension<AuthIdentity>,
     axum::extract::Query(query): axum::extract::Query<crate::content_catalog::ContentQuery>,
 ) -> Result<Json<crate::content_catalog::ContentQueryResult>, (StatusCode, String)> {
-    let ps = state.profile_store.as_ref().ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not configured".into(),
-    ))?;
+    let ps = state
+        .profile_store
+        .as_ref()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "not configured".into()))?;
     let mgr = state.content_catalog_mgr.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "content catalog not configured".into(),
@@ -500,7 +500,12 @@ pub async fn my_content(
     // Use X-Profile-Id header (from Caddy proxy) if available, otherwise resolve from identity
     let profile = if let Some(pid) = headers.get("x-profile-id").and_then(|v| v.to_str().ok()) {
         ps.get(pid)
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "profile store error".into()))?
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "profile store error".into(),
+                )
+            })?
             .ok_or((StatusCode::NOT_FOUND, format!("profile '{pid}' not found")))?
     } else {
         resolve_my_profile(&identity, ps).map_err(|s| (s, "profile not found".into()))?
@@ -540,20 +545,13 @@ pub async fn my_content_thumbnail(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let cat = catalog.read().await;
     let entry = cat.get(&id).ok_or(StatusCode::NOT_FOUND)?;
-    let thumb_path = entry
-        .thumbnail_path
-        .as_ref()
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let thumb_path = entry.thumbnail_path.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     let data = tokio::fs::read(thumb_path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    Ok((
-        [(header::CONTENT_TYPE, "image/jpeg")],
-        Body::from(data),
-    )
-        .into_response())
+    Ok(([(header::CONTENT_TYPE, "image/jpeg")], Body::from(data)).into_response())
 }
 
 /// GET /api/my/content/:id/body
@@ -603,11 +601,7 @@ pub async fn my_content_body(
         _ => "application/octet-stream",
     };
 
-    Ok((
-        [(header::CONTENT_TYPE, content_type)],
-        Body::from(data),
-    )
-        .into_response())
+    Ok(([(header::CONTENT_TYPE, content_type)], Body::from(data)).into_response())
 }
 
 /// DELETE /api/my/content/:id
@@ -616,16 +610,15 @@ pub async fn delete_my_content(
     axum::Extension(identity): axum::Extension<AuthIdentity>,
     Path(id): Path<String>,
 ) -> Result<Json<ActionResponse>, (StatusCode, String)> {
-    let ps = state.profile_store.as_ref().ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not configured".into(),
-    ))?;
+    let ps = state
+        .profile_store
+        .as_ref()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "not configured".into()))?;
     let mgr = state.content_catalog_mgr.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "content catalog not configured".into(),
     ))?;
-    let profile =
-        resolve_my_profile(&identity, ps).map_err(|s| (s, "profile not found".into()))?;
+    let profile = resolve_my_profile(&identity, ps).map_err(|s| (s, "profile not found".into()))?;
 
     let catalog = mgr
         .get_catalog(&profile.id)
@@ -657,16 +650,15 @@ pub async fn bulk_delete_my_content(
     axum::Extension(identity): axum::Extension<AuthIdentity>,
     Json(req): Json<BulkDeleteRequest>,
 ) -> Result<Json<ActionResponse>, (StatusCode, String)> {
-    let ps = state.profile_store.as_ref().ok_or((
-        StatusCode::SERVICE_UNAVAILABLE,
-        "not configured".into(),
-    ))?;
+    let ps = state
+        .profile_store
+        .as_ref()
+        .ok_or((StatusCode::SERVICE_UNAVAILABLE, "not configured".into()))?;
     let mgr = state.content_catalog_mgr.as_ref().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
         "content catalog not configured".into(),
     ))?;
-    let profile =
-        resolve_my_profile(&identity, ps).map_err(|s| (s, "profile not found".into()))?;
+    let profile = resolve_my_profile(&identity, ps).map_err(|s| (s, "profile not found".into()))?;
 
     let catalog = mgr
         .get_catalog(&profile.id)

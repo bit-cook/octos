@@ -150,14 +150,13 @@ pub async fn frps_auth(
         }
 
         "NewProxy" => {
-            let content: NewProxyContent =
-                serde_json::from_value(req.content).map_err(|e| {
-                    tracing::warn!(error = %e, "frps NewProxy: invalid request content");
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(PluginResponse::deny("invalid proxy content")),
-                    )
-                })?;
+            let content: NewProxyContent = serde_json::from_value(req.content).map_err(|e| {
+                tracing::warn!(error = %e, "frps NewProxy: invalid request content");
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(PluginResponse::deny("invalid proxy content")),
+                )
+            })?;
 
             // Look up the tenant by the token used during login
             let tenant = match store.find_by_tunnel_token(&content.privilege_key) {

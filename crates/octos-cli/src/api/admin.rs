@@ -2925,8 +2925,9 @@ pub async fn create_tenant(
     // Validate tenant name (must match TenantStore rules: lowercase alnum + hyphens,
     // no leading/trailing hyphens, max 64 chars)
     use std::sync::LazyLock;
-    static TENANT_NAME_RE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$").unwrap());
+    static TENANT_NAME_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$").unwrap()
+    });
     if !TENANT_NAME_RE.is_match(&req.name) {
         return Err((StatusCode::BAD_REQUEST, "Tenant name must be 1-64 lowercase alphanumeric characters or hyphens, cannot start or end with a hyphen".to_string()));
     }
@@ -3103,8 +3104,9 @@ pub async fn register_tenant(
     // Validate tenant name (must match TenantStore rules: lowercase alnum + hyphens,
     // no leading/trailing hyphens, max 64 chars)
     use std::sync::LazyLock;
-    static TENANT_NAME_RE: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$").unwrap());
+    static TENANT_NAME_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$|^[a-z0-9]$").unwrap()
+    });
     if !TENANT_NAME_RE.is_match(&req.name) {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -3118,7 +3120,9 @@ pub async fn register_tenant(
     ))?;
 
     // Resolve user's email for legacy tenant matching
-    let user_email = state.user_store.as_ref()
+    let user_email = state
+        .user_store
+        .as_ref()
         .and_then(|us| us.get(&user_id).ok().flatten())
         .map(|u| u.email)
         .unwrap_or_default();
@@ -3188,8 +3192,13 @@ pub async fn register_tenant(
     if !user_email.is_empty() {
         if let Some(auth_manager) = state.auth_manager.as_ref() {
             let (subject, html) = build_register_setup_email(&tenant, domain, server);
-            match auth_manager.send_html_email(&user_email, &subject, &html).await {
-                Ok(true) => { email_sent = true; }
+            match auth_manager
+                .send_html_email(&user_email, &subject, &html)
+                .await
+            {
+                Ok(true) => {
+                    email_sent = true;
+                }
                 Ok(false) => { /* SMTP not configured — skip silently */ }
                 Err(e) => {
                     tracing::warn!(
@@ -3264,7 +3273,9 @@ pub async fn register_setup_script(
     ))?;
 
     // Resolve user's email for legacy tenant matching
-    let user_email = state.user_store.as_ref()
+    let user_email = state
+        .user_store
+        .as_ref()
         .and_then(|us| us.get(&user_id).ok().flatten())
         .map(|u| u.email)
         .unwrap_or_default();
@@ -3369,8 +3380,14 @@ fn build_register_setup_email(
     server: &str,
 ) -> (String, String) {
     let unix_command = html_escape(&build_register_setup_command_unix(tenant, domain, server));
-    let windows_command = html_escape(&build_register_setup_command_windows(tenant, domain, server));
-    let public_url = format!("https://{}.{}", html_escape(&tenant.subdomain), html_escape(domain));
+    let windows_command = html_escape(&build_register_setup_command_windows(
+        tenant, domain, server,
+    ));
+    let public_url = format!(
+        "https://{}.{}",
+        html_escape(&tenant.subdomain),
+        html_escape(domain)
+    );
     let subject = format!("octos setup for {}", tenant.subdomain);
     let html = format!(
         r#"<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 720px; margin: 0 auto; padding: 32px 20px;">
@@ -3451,7 +3468,8 @@ mod register_setup_script_tests {
             updated_at: Utc::now(),
         };
 
-        let (_subject, html) = build_register_setup_email(&tenant, "octos-cloud.org", "163.192.33.32");
+        let (_subject, html) =
+            build_register_setup_email(&tenant, "octos-cloud.org", "163.192.33.32");
 
         assert!(html.contains("install.sh"));
         assert!(html.contains("--tunnel"));
@@ -3465,10 +3483,10 @@ mod register_setup_script_tests {
 #[cfg(test)]
 mod register_tenant_email_tests {
     use super::*;
+    use crate::api::router::AuthIdentity;
     use crate::api::{AppState, SseBroadcaster};
     use crate::config::DeploymentMode;
     use crate::otp::{AuthManager, DashboardAuthConfig, SmtpConfig};
-    use crate::api::router::AuthIdentity;
     use crate::user_store::{User, UserRole, UserStore};
     use std::sync::Arc;
 
@@ -3493,7 +3511,9 @@ mod register_tenant_email_tests {
             watchdog_enabled: None,
             alerts_enabled: None,
             sysinfo: tokio::sync::Mutex::new(sysinfo::System::new()),
-            tenant_store: Some(Arc::new(crate::tenant::TenantStore::open(dir.path()).unwrap())),
+            tenant_store: Some(Arc::new(
+                crate::tenant::TenantStore::open(dir.path()).unwrap(),
+            )),
             tunnel_domain: Some("octos-cloud.org".into()),
             frps_server: Some("163.192.33.32".into()),
             frps_port: Some(7000),

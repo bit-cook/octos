@@ -331,12 +331,7 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
-        let config = render_frpc_config(
-            &tenant,
-            "163.192.33.32",
-            7000,
-            "octos-cloud.org",
-        );
+        let config = render_frpc_config(&tenant, "163.192.33.32", 7000, "octos-cloud.org");
         assert!(config.contains("serverAddr = \"163.192.33.32\""));
         assert!(config.contains("serverPort = 7000"));
         // Uses the per-tenant tunnel_token for auth
