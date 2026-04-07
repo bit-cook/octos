@@ -358,3 +358,78 @@ async fn test_cost_update_accumulates_across_iterations() {
         assert!(session_cost.is_none());
     }
 }
+
+#[tokio::test]
+async fn test_run_task_emits_idle_notification_on_end_turn() {
+    use octos_agent::swarm::mailbox::{InProcessMailbox, MailboxBackend, MailboxMessageType};
+    use octos_core::{Task, TaskContext, TaskKind};
+
+    let dir = TempDir::new().unwrap();
+
+    // Mock LLM that immediately ends the task with no tool calls.
+    let llm: Arc<dyn LlmProvider> =
+        Arc::new(MockLlmProvider::new(vec![end_turn("all done", 100, 50)]));
+    let tools = ToolRegistry::with_builtins(dir.path());
+    let memory = Arc::new(EpisodeStore::open(dir.path().join(".octos")).await.unwrap());
+
+    let mailbox: Arc<dyn MailboxBackend> = Arc::new(InProcessMailbox::new());
+    let agent = Agent::new(AgentId::new("subagent-1"), llm, tools, memory)
+        .with_config(AgentConfig {
+            save_episodes: false,
+            ..Default::default()
+        })
+        .with_mailbox(mailbox.clone(), "leader");
+
+    let task = Task::new(
+        TaskKind::Code {
+            instruction: "say hi".to_string(),
+            files: vec![],
+        },
+        TaskContext {
+            working_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        },
+    );
+
+    let _ = agent.run_task(&task).await.unwrap();
+
+    // The leader's inbox should now contain exactly one IdleNotification
+    // sent by this worker.
+    let pending = mailbox.list("leader").await.unwrap();
+    assert_eq!(pending.len(), 1, "expected one IdleNotification");
+    let m = &pending[0];
+    assert_eq!(m.kind, MailboxMessageType::IdleNotification);
+    assert_eq!(m.sender, "subagent-1");
+    assert_eq!(m.recipient, "leader");
+    assert_eq!(m.payload["reason"], "end_turn");
+    assert_eq!(m.payload["iterations"], 1);
+}
+
+#[tokio::test]
+async fn test_run_task_without_mailbox_does_not_panic() {
+    use octos_core::{Task, TaskContext, TaskKind};
+    let dir = TempDir::new().unwrap();
+    let llm: Arc<dyn LlmProvider> = Arc::new(MockLlmProvider::new(vec![end_turn("ok", 1, 1)]));
+    let tools = ToolRegistry::with_builtins(dir.path());
+    let memory = Arc::new(EpisodeStore::open(dir.path().join(".octos")).await.unwrap());
+
+    let agent = Agent::new(AgentId::new("solo"), llm, tools, memory).with_config(AgentConfig {
+        save_episodes: false,
+        ..Default::default()
+    });
+
+    let task = Task::new(
+        TaskKind::Code {
+            instruction: "x".into(),
+            files: vec![],
+        },
+        TaskContext {
+            working_dir: dir.path().to_path_buf(),
+            ..Default::default()
+        },
+    );
+
+    // No mailbox wired — must complete cleanly without panicking.
+    let result = agent.run_task(&task).await.unwrap();
+    assert!(result.success);
+}

@@ -135,6 +135,19 @@ pub struct Agent {
     pub(super) hook_context: std::sync::Mutex<Option<HookContext>>,
     /// Shutdown signal.
     pub(super) shutdown: Arc<AtomicBool>,
+    /// Optional swarm mailbox + leader recipient for emitting
+    /// IdleNotification messages when the worker's run_task loop exits
+    /// naturally. None for standalone (non-coordinated) agents.
+    pub(super) mailbox: Option<MailboxBinding>,
+}
+
+/// Pairs a mailbox backend with the recipient name to address when sending
+/// coordinator-bound messages (e.g. IdleNotification). The two are useless
+/// apart, so they're stored as one unit.
+#[derive(Clone)]
+pub struct MailboxBinding {
+    pub backend: Arc<dyn crate::swarm::mailbox::MailboxBackend>,
+    pub leader: String,
 }
 
 impl Agent {
@@ -159,6 +172,7 @@ impl Agent {
             hooks: None,
             hook_context: std::sync::Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
+            mailbox: None,
         }
     }
 
@@ -184,6 +198,7 @@ impl Agent {
             hooks: None,
             hook_context: std::sync::Mutex::new(None),
             shutdown: Arc::new(AtomicBool::new(false)),
+            mailbox: None,
         }
     }
 
@@ -225,6 +240,22 @@ impl Agent {
     /// the agent can be behind an Arc for concurrent speculative overflow.
     pub fn set_reporter(&self, reporter: Arc<dyn ProgressReporter>) {
         *self.reporter.write().unwrap_or_else(|e| e.into_inner()) = reporter;
+    }
+
+    /// Wire a swarm mailbox + leader recipient. When set, the agent's
+    /// `run_task` worker loop emits `IdleNotification` messages on natural
+    /// exit so the leader/coordinator can schedule follow-up work without
+    /// polling. See [`MailboxBinding`] and the `swarm::mailbox` module.
+    pub fn with_mailbox(
+        mut self,
+        backend: Arc<dyn crate::swarm::mailbox::MailboxBackend>,
+        leader: impl Into<String>,
+    ) -> Self {
+        self.mailbox = Some(MailboxBinding {
+            backend,
+            leader: leader.into(),
+        });
+        self
     }
 
     /// Get a clone of the current reporter.

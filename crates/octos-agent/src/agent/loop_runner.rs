@@ -17,6 +17,7 @@ use super::message_repair::{
 use super::{Agent, ConversationResponse, TokenTracker};
 use crate::loop_detect::LoopDetector;
 use crate::progress::ProgressEvent;
+use crate::swarm::mailbox::{MailboxMessage, MailboxMessageType};
 
 impl Agent {
     /// Build a `ChatConfig` with optional `chat_max_tokens` override from `AgentConfig`.
@@ -438,6 +439,8 @@ impl Agent {
                             duration_ms = task_start.elapsed().as_millis() as u64,
                             "task completed"
                         );
+                        self.emit_idle_notification(&task.id, "end_turn", iteration)
+                            .await;
                         return Ok(self.build_result(&response, total_usage, files_modified));
                     }
                     StopReason::ToolUse => {
@@ -456,6 +459,13 @@ impl Agent {
                             iterations: iteration,
                             duration: task_start.elapsed(),
                         });
+                        // MaxTokens with no pending tool calls is also an idle
+                        // exit per #297: the worker has nothing else to do,
+                        // even though the cause was a budget hit rather than
+                        // natural completion. The leader can decide what to
+                        // requeue based on the reason field.
+                        self.emit_idle_notification(&task.id, "max_tokens", iteration)
+                            .await;
                         return Ok(self.build_result(&response, total_usage, files_modified));
                     }
                     StopReason::ContentFiltered => {
@@ -477,6 +487,34 @@ impl Agent {
         }
         .instrument(span)
         .await
+    }
+
+    /// Send an `IdleNotification` to the leader if a mailbox is wired up.
+    /// Failures are logged at warn level but never propagated — IdleNotification
+    /// is best-effort scheduling guidance, not a correctness gate.
+    async fn emit_idle_notification(
+        &self,
+        last_task_id: &octos_core::TaskId,
+        reason: &str,
+        iterations: u32,
+    ) {
+        let Some(binding) = self.mailbox.as_ref() else {
+            return;
+        };
+        let payload = serde_json::json!({
+            "last_task_id": last_task_id.to_string(),
+            "reason": reason,
+            "iterations": iterations,
+        });
+        let msg = MailboxMessage::new(
+            MailboxMessageType::IdleNotification,
+            self.id.0.clone(),
+            binding.leader.clone(),
+            payload,
+        );
+        if let Err(e) = binding.backend.send(msg).await {
+            warn!(error = %e, "failed to deliver IdleNotification to leader");
+        }
     }
 
     fn build_result(
