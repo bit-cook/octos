@@ -354,6 +354,9 @@ impl Agent {
                     .await?;
                 total_usage.input_tokens += response.usage.input_tokens;
                 total_usage.output_tokens += response.usage.output_tokens;
+                // session_cost is the cumulative cost through this round and is
+                // rebound every iteration; only the value from the terminal
+                // iteration flows into the final `TaskCompleted` event below.
                 let session_cost = self.emit_cost_update(&total_usage, &response.usage);
 
                 let tool_names: Vec<&str> = response

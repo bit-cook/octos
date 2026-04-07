@@ -20,6 +20,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use eyre::{Result, WrapErr};
@@ -27,6 +28,15 @@ use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
+
+/// Process-local monotonic counter used by [`RedbMailbox`] to break ties when
+/// two messages share the same UUID v7 millisecond timestamp. UUID v7 only
+/// encodes 48 bits of ms in its leading bits — the rest is random — so the
+/// raw UUID alone does not preserve insertion order inside a millisecond.
+/// Appending this counter to the redb composite key restores strict FIFO on
+/// the storage side without changing `MailboxMessage.id` (which remains a
+/// standard UUID v7 for cross-process reference and repo convention).
+static MAILBOX_SEND_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Type tag for messages flowing through the mailbox. Mirrors OpenHarness's
 /// MessageType enum so the wire format stays compatible if we ever bridge
@@ -109,6 +119,24 @@ pub trait MailboxBackend: Send + Sync {
     async fn list(&self, recipient: &str) -> Result<Vec<MailboxMessage>>;
 }
 
+/// Shared recipient-name validator used by every [`MailboxBackend`] impl.
+///
+/// Rejects empty names and any name containing `/`. The `/` restriction comes
+/// from [`RedbMailbox`]'s composite-key scheme (`<recipient>/<id>/<seq>`), but
+/// we enforce it on the in-process backend too so mixed-backend tests and
+/// migrations behave identically.
+fn validate_recipient(recipient: &str) -> Result<()> {
+    if recipient.is_empty() {
+        return Err(eyre::eyre!("mailbox recipient must not be empty"));
+    }
+    if recipient.contains('/') {
+        return Err(eyre::eyre!(
+            "mailbox recipient must not contain '/' (would collide with key prefix scheme): {recipient:?}"
+        ));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // In-process backend
 // ---------------------------------------------------------------------------
@@ -131,6 +159,7 @@ impl InProcessMailbox {
 #[async_trait]
 impl MailboxBackend for InProcessMailbox {
     async fn send(&self, message: MailboxMessage) -> Result<()> {
+        validate_recipient(&message.recipient)?;
         let mut guard = self.inner.lock().await;
         guard
             .entry(message.recipient.clone())
@@ -140,6 +169,7 @@ impl MailboxBackend for InProcessMailbox {
     }
 
     async fn recv(&self, recipient: &str) -> Result<Option<MailboxMessage>> {
+        validate_recipient(recipient)?;
         let mut guard = self.inner.lock().await;
         Ok(guard.get_mut(recipient).and_then(|q| q.pop_front()))
     }
@@ -150,6 +180,7 @@ impl MailboxBackend for InProcessMailbox {
     }
 
     async fn list(&self, recipient: &str) -> Result<Vec<MailboxMessage>> {
+        validate_recipient(recipient)?;
         let guard = self.inner.lock().await;
         Ok(guard
             .get(recipient)
@@ -164,11 +195,14 @@ impl MailboxBackend for InProcessMailbox {
 
 /// Schema:
 ///
-/// - `mailbox`: composite key `<recipient>/<message_id>` → JSON-encoded
+/// - `mailbox`: composite key `<recipient>/<message_id>/<seq>` → JSON-encoded
 ///   `MailboxMessage`. Iterating with a `<recipient>/` prefix yields all
-///   pending messages for that recipient in lexicographic (= chronological)
-///   order. Recipient names containing `/` are not supported and rejected
-///   on send to avoid prefix collisions.
+///   pending messages for that recipient in lexicographic (= insertion)
+///   order. The trailing `seq` is a process-local monotonic counter that
+///   breaks ties when two messages share the same UUID v7 millisecond; it
+///   exists only in the redb key, not in `MailboxMessage.id`. Recipient
+///   names containing `/` are rejected by [`validate_recipient`] on both
+///   backends to avoid prefix collisions.
 const MAILBOX_TABLE: TableDefinition<&str, &str> = TableDefinition::new("mailbox");
 
 /// redb-backed mailbox. Persists at `<dir>/mailbox.redb`. Survives parent
@@ -201,21 +235,19 @@ impl RedbMailbox {
         Ok(Self { db: Arc::new(db) })
     }
 
+    /// Build the redb composite key for a message.
+    ///
+    /// Format: `<recipient>/<message_id>/<seq:016x>`
+    ///
+    /// The trailing `seq` is a process-local monotonic counter fetched on
+    /// every send. It guarantees that two messages inserted in the same
+    /// UUID v7 millisecond still sort in send order — otherwise the random
+    /// trailing bits of UUID v7 would reorder bursts. See
+    /// [`MAILBOX_SEND_SEQ`] for the rationale.
     fn make_key(recipient: &str, message_id: &str) -> String {
-        format!("{recipient}/{message_id}")
+        let seq = MAILBOX_SEND_SEQ.fetch_add(1, Ordering::Relaxed);
+        format!("{recipient}/{message_id}/{seq:016x}")
     }
-}
-
-fn validate_recipient(recipient: &str) -> Result<()> {
-    if recipient.is_empty() {
-        return Err(eyre::eyre!("mailbox recipient must not be empty"));
-    }
-    if recipient.contains('/') {
-        return Err(eyre::eyre!(
-            "mailbox recipient must not contain '/' (would collide with key prefix scheme): {recipient:?}"
-        ));
-    }
-    Ok(())
 }
 
 #[async_trait]
@@ -448,5 +480,57 @@ mod tests {
         // "aa"'s message is still there.
         let aa = mb.recv("aa").await.unwrap().unwrap();
         assert_eq!(aa.payload["text"], "for-aa");
+    }
+
+    #[tokio::test]
+    async fn redb_backend_preserves_fifo_under_same_ms_burst() {
+        // Regression for the M1 finding on PR #298: UUID v7 only encodes
+        // 48 bits of ms in its leading bits, so two messages produced in the
+        // same millisecond are ordered by random bytes — not send order —
+        // unless the redb composite key carries a monotonic tiebreaker.
+        //
+        // This test sends N messages back-to-back (with no sleep) so they
+        // almost certainly share a ms, then asserts `recv` returns them in
+        // send order.
+        const N: usize = 200;
+        let dir = tempfile::tempdir().unwrap();
+        let mb = RedbMailbox::open(dir.path()).await.unwrap();
+
+        for i in 0..N {
+            mb.send(MailboxMessage::new(
+                MailboxMessageType::UserMessage,
+                "leader",
+                "worker",
+                serde_json::json!({ "i": i }),
+            ))
+            .await
+            .unwrap();
+        }
+
+        for expected in 0..N {
+            let m = mb
+                .recv("worker")
+                .await
+                .unwrap()
+                .unwrap_or_else(|| panic!("ran out of messages at index {expected} of {N}"));
+            assert_eq!(
+                m.payload["i"], expected,
+                "FIFO violation at index {expected} — got {}",
+                m.payload["i"]
+            );
+        }
+        assert!(mb.recv("worker").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn in_process_backend_rejects_empty_and_slash_recipients() {
+        // L1 regression: both backends must agree on recipient validation.
+        let mb = InProcessMailbox::new();
+        assert!(mb.send(msg("", "boom")).await.is_err());
+        assert!(mb.send(msg("a/b", "boom")).await.is_err());
+        assert!(mb.recv("").await.is_err());
+        assert!(mb.recv("a/b").await.is_err());
+        assert!(mb.list("").await.is_err());
+        assert!(mb.list("a/b").await.is_err());
     }
 }
