@@ -9,4 +9,5 @@
 //! management) wherever the original would have used JSONL files or Python
 //! shell-outs.
 
+pub mod mailbox;
 pub mod worktree;
