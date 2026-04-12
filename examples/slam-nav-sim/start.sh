@@ -12,13 +12,16 @@
 #   - dora-mujoco at /home/demo/Public/dora-moveit2/dora-mujoco
 #   - MuJoCo model at /home/demo/Public/octos_inspection/models/
 
-set -euo pipefail
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Environment setup
 export PATH="/home/demo/.cargo/bin:$PATH"
+# Conda activate needs PS1 set (nounset would fail otherwise)
+export PS1="${PS1:-}"
 source /home/demo/anaconda3/bin/activate robobrain2
+set -u
 
 # Display for MuJoCo GL and Rerun
 export DISPLAY="${DISPLAY:-:0}"
