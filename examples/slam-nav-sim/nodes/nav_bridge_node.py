@@ -17,12 +17,37 @@ import json
 import math
 import os
 import struct
+import sys
 import time
 
 import numpy as np
 import pyarrow as pa
 from dora import Node
 
+# Add parent dir for vendored octos package
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from octos.safety import SafetyTier, RobotPermissionPolicy
+
+
+# ---- Safety tier configuration ----
+# SAFETY_TIER env var controls max allowed tool tier for this session.
+# "observe" = read-only (get_map, get_robot_state, read_lidar)
+# "safe_motion" = can navigate and stop (default)
+# "full_actuation" = all tools including arm control
+_TIER_NAME = os.environ.get("SAFETY_TIER", "safe_motion")
+_SAFETY_POLICY = RobotPermissionPolicy(
+    max_tier=SafetyTier(_TIER_NAME),
+)
+
+# Tool → required safety tier mapping (from nav_tool_map.json)
+TOOL_TIERS = {
+    "navigate_to": SafetyTier.SAFE_MOTION,
+    "stop_base": SafetyTier.SAFE_MOTION,
+    "get_map": SafetyTier.OBSERVE,
+    "get_robot_state": SafetyTier.OBSERVE,
+    "read_lidar": SafetyTier.OBSERVE,
+    "look_around": SafetyTier.OBSERVE,
+}
 
 # ---- Station configuration (warehouse path, Y-axis layout) ----
 STATIONS = {
@@ -307,6 +332,19 @@ class NavBridge:
         tool = request.get("tool", "")
         args = request.get("args", {})
         print(f"[nav-bridge] Executing: {tool}({args})")
+
+        # Safety tier check
+        required_tier = TOOL_TIERS.get(tool, SafetyTier.OBSERVE)
+        allowed, err_msg = _SAFETY_POLICY.authorize(tool, required_tier)
+        if not allowed:
+            print(f"[nav-bridge] DENIED: {err_msg}")
+            return _result(
+                f"PERMISSION DENIED: {err_msg}. "
+                f"Current session tier is '{_TIER_NAME}'. "
+                f"Tool '{tool}' requires '{required_tier.value}' tier.",
+                {"error": "permission_denied", "tool": tool,
+                 "required_tier": required_tier.value,
+                 "current_tier": _TIER_NAME})
 
         dispatch = {
             "get_map": lambda: self.tool_get_map(),
