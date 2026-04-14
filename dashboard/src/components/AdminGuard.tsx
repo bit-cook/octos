@@ -1,18 +1,62 @@
-import { useAuth } from '../contexts/AuthContext'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { myApi } from '../api'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function AdminGuard({ children }: { children: React.ReactNode }) {
-  const { isAdmin, user } = useAuth()
+  const { isAdmin, user, loading } = useAuth()
   const { id } = useParams<{ id: string }>()
+  const [canManageSubAccount, setCanManageSubAccount] = useState(false)
+  const [checkingSubAccess, setCheckingSubAccess] = useState(false)
 
-  // Allow access if:
-  // 1. User is admin, OR
-  // 2. User is viewing their own profile, OR
-  // 3. User is the parent of a sub-account (profile ID starts with their ID)
   const userId = user?.id || ''
-  const isOwnProfile = id && (id === userId || id.startsWith(userId + '--'))
+  const isOwnProfile = !!id && id === userId
 
-  if (!isAdmin && !isOwnProfile) {
+  useEffect(() => {
+    let cancelled = false
+
+    if (loading || isAdmin || !id || !userId || isOwnProfile) {
+      setCheckingSubAccess(false)
+      setCanManageSubAccount(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    setCheckingSubAccess(true)
+    setCanManageSubAccount(false)
+
+    myApi.listSubAccounts()
+      .then((subs) => {
+        if (!cancelled) {
+          setCanManageSubAccount(subs.some((sub) => sub.id === id))
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCanManageSubAccount(false)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCheckingSubAccess(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [id, isAdmin, isOwnProfile, loading, userId])
+
+  if (loading || checkingSubAccess) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin w-6 h-6 border-2 border-accent border-t-transparent rounded-full" />
+      </div>
+    )
+  }
+
+  if (!isAdmin && !isOwnProfile && !canManageSubAccount) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center">
         <div className="text-4xl mb-4 text-gray-600">403</div>
