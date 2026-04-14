@@ -118,13 +118,12 @@ impl PluginTool {
                     continue;
                 }
             }
-            if key == "style" {
-                if let Some(style) = value.as_str()
-                    && let Some(resolved) = resolve_slides_style_in_work_dir(style, work_dir)
-                {
-                    rewritten.insert(key.clone(), serde_json::Value::String(resolved));
-                    continue;
-                }
+            if key == "style"
+                && let Some(style) = value.as_str()
+                && let Some(resolved) = resolve_slides_style_in_work_dir(style, work_dir)
+            {
+                rewritten.insert(key.clone(), serde_json::Value::String(resolved));
+                continue;
             }
             if key == "slides" {
                 if let Some(slides) = value.as_array() {

@@ -285,8 +285,7 @@ fn parse_daily_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
         let hour = caps.get(2)?.as_str().parse::<u32>().ok()?;
         let minute = caps
             .get(3)
-            .map(|m| m.as_str().parse::<u32>().ok())
-            .flatten()
+            .and_then(|m| m.as_str().parse::<u32>().ok())
             .unwrap_or(0);
         let message = caps.get(4)?.as_str().trim().to_string();
         let hour = apply_time_qualifier(hour, qualifier)?;
@@ -312,8 +311,7 @@ fn parse_daily_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
     let hour = caps.get(1)?.as_str().parse::<u32>().ok()?;
     let minute = caps
         .get(2)
-        .map(|m| m.as_str().parse::<u32>().ok())
-        .flatten()
+        .and_then(|m| m.as_str().parse::<u32>().ok())
         .unwrap_or(0);
     let am_pm = caps.get(3).map(|m| m.as_str());
     let message = caps.get(4)?.as_str().trim().to_string();
@@ -345,8 +343,7 @@ fn parse_weekly_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
         let hour = caps.get(3)?.as_str().parse::<u32>().ok()?;
         let minute = caps
             .get(4)
-            .map(|m| m.as_str().parse::<u32>().ok())
-            .flatten()
+            .and_then(|m| m.as_str().parse::<u32>().ok())
             .unwrap_or(0);
         let message = caps.get(5)?.as_str().trim().to_string();
         let hour = apply_time_qualifier(hour, qualifier)?;
@@ -379,8 +376,7 @@ fn parse_weekly_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
     let hour = caps.get(2)?.as_str().parse::<u32>().ok()?;
     let minute = caps
         .get(3)
-        .map(|m| m.as_str().parse::<u32>().ok())
-        .flatten()
+        .and_then(|m| m.as_str().parse::<u32>().ok())
         .unwrap_or(0);
     let am_pm = caps.get(4).map(|m| m.as_str());
     let message = caps.get(5)?.as_str().trim().to_string();

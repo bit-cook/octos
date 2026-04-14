@@ -60,7 +60,7 @@ mod whatsapp;
 pub(crate) use super::prompt::settings_str;
 
 /// Context needed by adapters that require extra parameters beyond the common set.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::type_complexity)]
 pub struct ChannelRegistrationCtx<'a> {
     pub shutdown: &'a Arc<AtomicBool>,
     pub media_dir: &'a Path,

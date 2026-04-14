@@ -401,6 +401,7 @@ async fn emit_workspace_snapshot_notice(
 // ── Messages ────────────────────────────────────────────────────────────────
 
 /// Messages dispatched to a session actor.
+#[allow(clippy::large_enum_variant)]
 pub enum ActorMessage {
     /// A user message to process.
     Inbound {
