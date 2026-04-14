@@ -520,15 +520,17 @@ mod tests {
             on_timeout: ApprovalTimeoutBehavior::Notify,
         }]);
 
-        assert!(policy
-            .draft_for_tool_call(
-                "read_file",
-                "tc-read",
-                serde_json::json!({"path": "README.md"}),
-                Utc::now(),
-            )
-            .unwrap()
-            .is_none());
+        assert!(
+            policy
+                .draft_for_tool_call(
+                    "read_file",
+                    "tc-read",
+                    serde_json::json!({"path": "README.md"}),
+                    Utc::now(),
+                )
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

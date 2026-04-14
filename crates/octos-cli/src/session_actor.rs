@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex as StdMutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -17,23 +17,23 @@ use octos_agent::tools::{
     SendFileTool, SpawnTool, ToolPolicy, ToolRegistry,
 };
 use octos_agent::{
-    workspace_policy_path, write_workspace_policy, Agent, AgentConfig, ApprovalDecision,
-    ApprovalRequestEnvelope, ApprovalResponsePayload, ApprovalTimeoutBehavior, HookContext,
-    HookExecutor, PendingApproval, PendingApprovalDraft, PendingApprovalStore, TaskSupervisor,
-    TokenTracker, TurnAttachmentContext, WorkspacePolicy,
+    Agent, AgentConfig, ApprovalDecision, ApprovalRequestEnvelope, ApprovalResponsePayload,
+    ApprovalTimeoutBehavior, HookContext, HookExecutor, PendingApproval, PendingApprovalDraft,
+    PendingApprovalStore, TaskSupervisor, TokenTracker, TurnAttachmentContext, WorkspacePolicy,
+    workspace_policy_path, write_workspace_policy,
 };
 use octos_bus::{ActiveSessionStore, SessionHandle, SessionManager};
 use octos_core::AgentId;
 use octos_core::{
-    InboundMessage, Message, MessageRole, OutboundMessage, SessionKey, MAIN_PROFILE_ID,
-    METADATA_SENDER_USER_ID,
+    InboundMessage, MAIN_PROFILE_ID, METADATA_SENDER_USER_ID, Message, MessageRole,
+    OutboundMessage, SessionKey,
 };
 use octos_llm::{
     AdaptiveMode, AdaptiveRouter, EmbeddingProvider, LlmProvider, ProviderRouter,
     ResponsivenessObserver,
 };
 use octos_memory::{EpisodeStore, MemoryStore};
-use tokio::sync::{mpsc, Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 

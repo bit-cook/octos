@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use eyre::{bail, Result, WrapErr};
+use eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 
 /// Current config version.
@@ -1290,9 +1290,11 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.tool_policy_by_provider.len(), 2);
         assert!(config.tool_policy_by_provider.contains_key("gemini"));
-        assert!(config
-            .tool_policy_by_provider
-            .contains_key("claude-sonnet-4-20250514"));
+        assert!(
+            config
+                .tool_policy_by_provider
+                .contains_key("claude-sonnet-4-20250514")
+        );
     }
 
     #[test]

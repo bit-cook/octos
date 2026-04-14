@@ -81,7 +81,7 @@ jobs:
               exit 0
             fi
 
-            rustfmt --check --edition 2021 --config skip_children=true "${changed_rs[@]}"
+            rustfmt --check --edition 2024 --config skip_children=true "${changed_rs[@]}"
           else
             cargo fmt --all -- --check
           fi
