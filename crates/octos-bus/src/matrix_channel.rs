@@ -83,13 +83,19 @@ pub trait BotManager: Send + Sync {
     async fn list_bots(&self, sender: &str) -> Result<String>;
 
     /// Create a natural-language schedule for the current room context.
-    async fn schedule_bot_task(&self, request: &str, sender: &str, room_id: &str) -> Result<String>;
+    async fn schedule_bot_task(&self, request: &str, sender: &str, room_id: &str)
+        -> Result<String>;
 
     /// List schedule jobs visible to the current room context.
     async fn list_schedules(&self, sender: &str, room_id: &str) -> Result<String>;
 
     /// Remove a schedule job visible to the current room context.
-    async fn unschedule_bot_task(&self, job_id: &str, sender: &str, room_id: &str) -> Result<String>;
+    async fn unschedule_bot_task(
+        &self,
+        job_id: &str,
+        sender: &str,
+        room_id: &str,
+    ) -> Result<String>;
 }
 
 // ── Bot Router ───────────────────────────────────────────────────────────────
@@ -479,7 +485,9 @@ fn has_explicit_room_marker(content: &Value) -> bool {
 }
 
 fn broadcast_target_matrix_user_ids(content: &Value) -> Vec<String> {
-    let Some(targets) = content.get(CONTENT_BROADCAST_TARGETS).and_then(|value| value.as_array())
+    let Some(targets) = content
+        .get(CONTENT_BROADCAST_TARGETS)
+        .and_then(|value| value.as_array())
     else {
         return Vec::new();
     };
@@ -1352,10 +1360,10 @@ async fn handle_transaction(
         )
         .await
         {
-            if !response.trim().is_empty()
-                && let Err(e) = send_text_to_room(&state, room_id, &response).await
-            {
-                warn!(error = %e, room_id, "failed to send slash command response");
+            if !response.trim().is_empty() {
+                if let Err(e) = send_text_to_room(&state, room_id, &response).await {
+                    warn!(error = %e, room_id, "failed to send slash command response");
+                }
             }
             continue;
         }
@@ -1419,20 +1427,16 @@ async fn handle_slash_command(
         "/createbot" => Some(dispatch_createbot(bot_manager.as_ref(), args_str, sender).await),
         "/deletebot" => Some(dispatch_deletebot(bot_manager.as_ref(), args_str, sender).await),
         "/listbots" | "/listbot" => Some(dispatch_listbots(bot_manager.as_ref(), sender).await),
-        "/schedule" => Some(dispatch_schedule(bot_manager.as_ref(), args_str, sender, room_id).await),
+        "/schedule" => {
+            Some(dispatch_schedule(bot_manager.as_ref(), args_str, sender, room_id).await)
+        }
         "/schedules" => Some(dispatch_schedules(bot_manager.as_ref(), sender, room_id).await),
-        "/unschedule" => Some(dispatch_unschedule(bot_manager.as_ref(), args_str, sender, room_id).await),
+        "/unschedule" => {
+            Some(dispatch_unschedule(bot_manager.as_ref(), args_str, sender, room_id).await)
+        }
         "/bothelp" => Some(SLASH_HELP.to_string()),
         "/allbots" => {
-            match dispatch_allbots(
-                state,
-                sender,
-                room_id,
-                args_str,
-                content,
-                source_event_id,
-            )
-            .await
+            match dispatch_allbots(state, sender, room_id, args_str, content, source_event_id).await
             {
                 Ok(()) => Some(String::new()),
                 Err(error) => Some(error),
@@ -1547,11 +1551,9 @@ async fn dispatch_allbots(
             message_id: source_event_id.map(str::to_string),
         };
 
-        state
-            .inbound_tx
-            .send(inbound)
-            .await
-            .map_err(|_| "broadcast dispatch failed because the inbound channel is closed".to_string())?;
+        state.inbound_tx.send(inbound).await.map_err(|_| {
+            "broadcast dispatch failed because the inbound channel is closed".to_string()
+        })?;
     }
 
     Ok(())
@@ -1572,11 +1574,7 @@ async fn dispatch_schedule(
         .unwrap_or_else(|e| format!("Failed to create schedule: {e}"))
 }
 
-async fn dispatch_schedules(
-    bot_manager: &dyn BotManager,
-    sender: &str,
-    room_id: &str,
-) -> String {
+async fn dispatch_schedules(bot_manager: &dyn BotManager, sender: &str, room_id: &str) -> String {
     bot_manager
         .list_schedules(sender, room_id)
         .await
@@ -6011,10 +6009,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(
-            result,
-            Some("mock unschedule: cron_deadbeef".to_string()),
-        );
+        assert_eq!(result, Some("mock unschedule: cron_deadbeef".to_string()),);
     }
 
     #[tokio::test]

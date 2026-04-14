@@ -86,12 +86,8 @@ impl CronTool {
             chat_id: Some(chat_id.to_string()),
         };
 
-        let job = service.add_job_with_tz(
-            parsed.name,
-            parsed.schedule,
-            payload,
-            parsed.timezone,
-        )?;
+        let job =
+            service.add_job_with_tz(parsed.name, parsed.schedule, payload, parsed.timezone)?;
 
         Ok(ToolResult {
             output: format!(
@@ -184,7 +180,9 @@ struct ParsedNaturalSchedule {
     description: String,
 }
 
-fn parse_natural_schedule_request(request: &str) -> std::result::Result<ParsedNaturalSchedule, String> {
+fn parse_natural_schedule_request(
+    request: &str,
+) -> std::result::Result<ParsedNaturalSchedule, String> {
     if let Some(parsed) = parse_delayed_schedule(request) {
         return Ok(parsed);
     }
@@ -293,9 +291,7 @@ fn parse_daily_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
         let message = caps.get(4)?.as_str().trim().to_string();
         let hour = apply_time_qualifier(hour, qualifier)?;
         let timezone = current_local_timezone_name();
-        let timezone_label = timezone
-            .clone()
-            .unwrap_or_else(current_local_offset_label);
+        let timezone_label = timezone.clone().unwrap_or_else(current_local_offset_label);
         return Some(ParsedNaturalSchedule {
             name: derive_job_name(&message),
             message,
@@ -310,10 +306,8 @@ fn parse_daily_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
         });
     }
 
-    let en = Regex::new(
-        r"(?i)^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(.+)$",
-    )
-    .ok()?;
+    let en =
+        Regex::new(r"(?i)^every\s+day\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s+(.+)$").ok()?;
     let caps = en.captures(request)?;
     let hour = caps.get(1)?.as_str().parse::<u32>().ok()?;
     let minute = caps
@@ -325,9 +319,7 @@ fn parse_daily_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
     let message = caps.get(4)?.as_str().trim().to_string();
     let hour = apply_am_pm(hour, am_pm)?;
     let timezone = current_local_timezone_name();
-    let timezone_label = timezone
-        .clone()
-        .unwrap_or_else(current_local_offset_label);
+    let timezone_label = timezone.clone().unwrap_or_else(current_local_offset_label);
     Some(ParsedNaturalSchedule {
         name: derive_job_name(&message),
         message,
@@ -360,9 +352,7 @@ fn parse_weekly_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
         let hour = apply_time_qualifier(hour, qualifier)?;
         let cron_weekday = cron_weekday(weekday);
         let timezone = current_local_timezone_name();
-        let timezone_label = timezone
-            .clone()
-            .unwrap_or_else(current_local_offset_label);
+        let timezone_label = timezone.clone().unwrap_or_else(current_local_offset_label);
         return Some(ParsedNaturalSchedule {
             name: derive_job_name(&message),
             message,
@@ -397,9 +387,7 @@ fn parse_weekly_schedule(request: &str) -> Option<ParsedNaturalSchedule> {
     let hour = apply_am_pm(hour, am_pm)?;
     let cron_weekday = cron_weekday(weekday);
     let timezone = current_local_timezone_name();
-    let timezone_label = timezone
-        .clone()
-        .unwrap_or_else(current_local_offset_label);
+    let timezone_label = timezone.clone().unwrap_or_else(current_local_offset_label);
     Some(ParsedNaturalSchedule {
         name: derive_job_name(&message),
         message,
@@ -1083,7 +1071,10 @@ mod tests {
 
     #[test]
     fn test_derive_job_name_preserves_cjk_message_text() {
-        assert_eq!(derive_job_name("检查系统状态，告诉我"), "检查系统状态-告诉我");
+        assert_eq!(
+            derive_job_name("检查系统状态，告诉我"),
+            "检查系统状态-告诉我"
+        );
         assert_eq!(derive_job_name("提醒我看天气"), "提醒我看天气");
     }
 
@@ -1166,12 +1157,8 @@ mod tests {
             )
             .unwrap();
 
-        let result = CronTool::remove_job_for_context(
-            &service,
-            "matrix",
-            "!room-a:localhost",
-            &job.id,
-        );
+        let result =
+            CronTool::remove_job_for_context(&service, "matrix", "!room-a:localhost", &job.id);
 
         assert!(!result.success);
         assert!(result.output.contains("not found in this chat"));

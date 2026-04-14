@@ -396,12 +396,7 @@ impl octos_bus::BotManager for GatewayBotManager {
     }
 
     async fn list_schedules(&self, _sender: &str, room_id: &str) -> eyre::Result<String> {
-        Ok(CronTool::list_jobs_for_context(
-            self.cron_service.as_ref(),
-            "matrix",
-            room_id,
-        )
-        .output)
+        Ok(CronTool::list_jobs_for_context(self.cron_service.as_ref(), "matrix", room_id).output)
     }
 
     async fn unschedule_bot_task(
@@ -410,12 +405,6 @@ impl octos_bus::BotManager for GatewayBotManager {
         _sender: &str,
         room_id: &str,
     ) -> eyre::Result<String> {
-        Ok(CronTool::remove_job_for_context(
-            &self.cron_service,
-            "matrix",
-            room_id,
-            job_id,
-        )
-        .output)
+        Ok(CronTool::remove_job_for_context(&self.cron_service, "matrix", room_id, job_id).output)
     }
 }
