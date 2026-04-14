@@ -1711,19 +1711,13 @@ ${CADDY_DOMAIN} {
     @auth path /auth/*
 
     handle @api {
-        reverse_proxy ${CADDY_UPSTREAM} {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy ${CADDY_UPSTREAM}
     }
     handle @admin {
-        reverse_proxy ${CADDY_UPSTREAM} {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy ${CADDY_UPSTREAM}
     }
     handle @auth {
-        reverse_proxy ${CADDY_UPSTREAM} {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy ${CADDY_UPSTREAM}
     }
     handle {
         reverse_proxy ${CADDY_UPSTREAM}

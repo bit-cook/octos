@@ -1384,19 +1384,13 @@ $Domain {
     @auth path /auth/*
 
     handle @api {
-        reverse_proxy $caddyUpstream {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy $caddyUpstream
     }
     handle @admin {
-        reverse_proxy $caddyUpstream {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy $caddyUpstream
     }
     handle @auth {
-        reverse_proxy $caddyUpstream {
-            header_up X-Profile-Id {labels.2}
-        }
+        reverse_proxy $caddyUpstream
     }
     handle {
         reverse_proxy $caddyUpstream
