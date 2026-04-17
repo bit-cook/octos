@@ -26,8 +26,22 @@ test.setTimeout(600_000);
 async function collectPreviewUrls(page: Page): Promise<string[]> {
   const text = await getAssistantMessageText(page);
   const matches =
-    text.match(/\/api\/preview\/[^\s"'<>]+\/signal-atlas\/index\.html/gi) || [];
-  return Array.from(new Set(matches.filter((value) => value.trim().length > 0)));
+    text.match(/\/api\/preview\/[^\s"'<>]+\/signal-atlas(?:\/index\.html|\/)?/gi) || [];
+  return Array.from(
+    new Set(
+      matches
+        .map((value) => normalizePreviewUrl(value))
+        .filter((value) => value.trim().length > 0),
+    ),
+  );
+}
+
+function normalizePreviewUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.endsWith('/index.html')) return trimmed;
+  if (trimmed.endsWith('/')) return `${trimmed}index.html`;
+  return trimmed;
 }
 
 async function waitForPreviewBody(
@@ -111,21 +125,29 @@ test.describe('Live deliverable flows', () => {
   test('site flow renders a built preview page and survives reload', async ({
     page,
   }) => {
+    const siteMarker = `browser-site-${Date.now().toString(36)}`;
+
     await sendAndWait(page, '/new site astro', {
       label: 'site-init',
       maxWait: 90_000,
     });
 
     const creationText = await getAssistantMessageText(page);
-    const previewUrls =
-      creationText.match(/\/api\/preview\/[^\s"'<>]+\/signal-atlas\/index\.html/gi) || [];
+    const previewUrls = Array.from(
+      new Set(
+        (
+          creationText.match(/\/api\/preview\/[^\s"'<>]+\/signal-atlas(?:\/index\.html|\/)?/gi) ||
+          []
+        ).map((value) => normalizePreviewUrl(value)),
+      ),
+    );
     expect(previewUrls).toHaveLength(1);
 
     const previewUrl = previewUrls[0];
 
     await sendAndWait(
       page,
-      'Update the homepage so the visible title says "Browser Site Acceptance" and the page clearly includes a "Live preview" section. Rebuild the site so the preview reflects it.',
+      `Update the homepage so the visible title says "Browser Site Acceptance ${siteMarker}" and the page clearly includes a "Live preview ${siteMarker}" section. Rebuild the site so the preview reflects it.`,
       {
         label: 'site-build',
         maxWait: 240_000,
@@ -137,18 +159,18 @@ test.describe('Live deliverable flows', () => {
       const body = await waitForPreviewBody(
         previewPage,
         previewUrl,
-        'Browser Site Acceptance',
+        `Browser Site Acceptance ${siteMarker}`,
         240_000,
       );
 
-      expect(body).toContain('Browser Site Acceptance');
-      expect(body).toContain('Live preview');
+      expect(body).toContain(`Browser Site Acceptance ${siteMarker}`);
+      expect(body).toContain(`Live preview ${siteMarker}`);
 
       await previewPage.reload({ waitUntil: 'networkidle' });
       const reloadedBody =
         (await previewPage.locator('body').innerText().catch(() => '')) || '';
-      expect(reloadedBody).toContain('Browser Site Acceptance');
-      expect(reloadedBody).toContain('Live preview');
+      expect(reloadedBody).toContain(`Browser Site Acceptance ${siteMarker}`);
+      expect(reloadedBody).toContain(`Live preview ${siteMarker}`);
     } finally {
       await previewPage.close();
     }
