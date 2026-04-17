@@ -1593,6 +1593,22 @@ fn run_build_command(command: &mut std::process::Command, label: &str) -> Result
     }
 }
 
+fn configure_site_node_command(
+    command: &mut std::process::Command,
+    project_dir: &std::path::Path,
+) -> Result<(), String> {
+    let cache_dir = project_dir.join(".npm-cache");
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|e| format!("create site npm cache failed: {e}"))?;
+    command
+        .current_dir(project_dir)
+        .env("npm_config_cache", &cache_dir)
+        .env("NPM_CONFIG_CACHE", &cache_dir)
+        .env("ASTRO_TELEMETRY_DISABLED", "1")
+        .env("NO_UPDATE_NOTIFIER", "1");
+    Ok(())
+}
+
 fn ensure_site_build_output(
     project_dir: &std::path::Path,
     metadata: &SiteProjectMetadata,
@@ -1630,11 +1646,13 @@ fn ensure_site_build_output(
         "astro-site" | "nextjs-app" | "react-vite" => {
             if !project_dir.join("node_modules").exists() {
                 let mut install = std::process::Command::new("npm");
-                install.current_dir(project_dir).arg("install");
+                configure_site_node_command(&mut install, project_dir)?;
+                install.arg("install");
                 run_build_command(&mut install, "npm install")?;
             }
             let mut build = std::process::Command::new("npm");
-            build.current_dir(project_dir).arg("run").arg("build");
+            configure_site_node_command(&mut build, project_dir)?;
+            build.arg("run").arg("build");
             run_build_command(&mut build, "npm run build")?;
         }
         other => return Err(format!("unsupported site template: {other}")),

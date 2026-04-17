@@ -14,6 +14,11 @@ use tokio::sync::Mutex;
 use crate::config::ChannelEntry;
 
 #[cfg(feature = "api")]
+pub(crate) type MetricsHandle = metrics_exporter_prometheus::PrometheusHandle;
+#[cfg(not(feature = "api"))]
+pub(crate) type MetricsHandle = ();
+
+#[cfg(feature = "api")]
 mod api;
 mod cli;
 #[cfg(feature = "discord")]
@@ -66,7 +71,7 @@ pub struct ChannelRegistrationCtx<'a> {
     pub media_dir: &'a Path,
     pub data_dir: &'a Path,
     pub session_mgr: &'a Arc<Mutex<SessionManager>>,
-    pub metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+    pub metrics_handle: Option<MetricsHandle>,
     pub task_query: Option<Arc<dyn Fn(&str) -> serde_json::Value + Send + Sync>>,
     pub gateway_profile_id: Option<&'a str>,
     pub api_port_override: Option<u16>,

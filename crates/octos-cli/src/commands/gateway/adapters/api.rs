@@ -5,13 +5,14 @@ use octos_bus::{ChannelManager, SessionManager};
 use tokio::sync::Mutex;
 
 use crate::config::ChannelEntry;
+use super::MetricsHandle;
 
 pub fn register(
     channel_mgr: &mut ChannelManager,
     entry: &ChannelEntry,
     shutdown: &Arc<AtomicBool>,
     session_mgr: &Arc<Mutex<SessionManager>>,
-    metrics_handle: Option<metrics_exporter_prometheus::PrometheusHandle>,
+    metrics_handle: Option<MetricsHandle>,
     task_query: Option<Arc<dyn Fn(&str) -> serde_json::Value + Send + Sync>>,
     gateway_profile_id: Option<&str>,
     api_port_override: Option<u16>,

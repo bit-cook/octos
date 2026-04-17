@@ -636,6 +636,33 @@ fn system_notice_metadata(sender_user_id: Option<&str>) -> serde_json::Value {
         .unwrap_or_else(|| serde_json::json!({}))
 }
 
+fn stamp_outbound_topic_and_sender(
+    msg: &mut OutboundMessage,
+    topic: Option<&str>,
+    sender_user_id: Option<&str>,
+) {
+    if !msg.metadata.is_object() {
+        msg.metadata = serde_json::json!({});
+    }
+    let metadata = msg
+        .metadata
+        .as_object_mut()
+        .expect("outbound metadata should be normalized to an object");
+
+    if let Some(uid) = sender_user_id {
+        metadata.insert(
+            METADATA_SENDER_USER_ID.to_string(),
+            serde_json::Value::String(uid.to_string()),
+        );
+    }
+
+    if let Some(topic) = topic.filter(|value| !value.is_empty()) {
+        metadata
+            .entry("topic".to_string())
+            .or_insert_with(|| serde_json::Value::String(topic.to_string()));
+    }
+}
+
 async fn dispatch_background_result_to_actor(
     tx: mpsc::Sender<ActorMessage>,
     payload: BackgroundResultPayload,
@@ -846,6 +873,49 @@ async fn snapshot_workspace_turn_for_path(
             ))
         }
     }
+}
+
+fn topic_prefers_structured_deliverables(topic: Option<&str>) -> bool {
+    matches!(
+        topic
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.split_whitespace().next().unwrap_or_default()),
+        Some("slides" | "site")
+    )
+}
+
+fn is_richer_deliverable(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some(
+            "pptx"
+                | "ppt"
+                | "pdf"
+                | "html"
+                | "htm"
+                | "xhtml"
+                | "mp3"
+                | "wav"
+                | "m4a"
+                | "aac"
+                | "flac"
+                | "ogg"
+        )
+    )
+}
+
+fn should_auto_deliver_report_file(topic: Option<&str>, files_modified: &[PathBuf], file: &Path) -> bool {
+    if file.extension().and_then(|e| e.to_str()) != Some("md") {
+        return false;
+    }
+    if topic_prefers_structured_deliverables(topic) {
+        return false;
+    }
+    !files_modified.iter().any(|candidate| is_richer_deliverable(candidate))
 }
 
 async fn emit_workspace_snapshot_notice(
@@ -1748,16 +1818,9 @@ async fn outbound_forwarder(params: ForwarderParams) {
     let key_str = session_key.to_string();
 
     while let Some(mut msg) = proxy_rx.recv().await {
-        // Inject sender_user_id into outbound metadata so the channel
-        // sends as the correct virtual user (appservice identity assertion).
-        if let Some(ref uid) = sender_user_id {
-            if let Some(obj) = msg.metadata.as_object_mut() {
-                obj.insert(
-                    METADATA_SENDER_USER_ID.to_string(),
-                    serde_json::Value::String(uid.clone()),
-                );
-            }
-        }
+        // Preserve sender identity and topic on all actor-originated outbound
+        // messages so topic-scoped file deliveries persist to the right history.
+        stamp_outbound_topic_and_sender(&mut msg, Some(&my_topic), sender_user_id.as_deref());
         let active_topic = active_sessions
             .read()
             .await
@@ -3564,7 +3627,11 @@ impl SessionActor {
                     );
                 }
                 for file in &conv_response.files_modified {
-                    if file.extension().and_then(|e| e.to_str()) == Some("md") {
+                    if should_auto_deliver_report_file(
+                        self.session_key.topic(),
+                        &conv_response.files_modified,
+                        file,
+                    ) {
                         // Resolve relative paths to absolute so the file URL works
                         let abs_file = if file.is_relative() {
                             std::fs::canonicalize(file)
@@ -6351,6 +6418,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_stamp_outbound_topic_and_sender_preserves_topic_scoped_delivery_metadata() {
+        let mut msg = OutboundMessage {
+            channel: "api".to_string(),
+            chat_id: "web-session".to_string(),
+            content: String::new(),
+            reply_to: None,
+            media: vec!["/tmp/deck.pptx".to_string()],
+            metadata: serde_json::json!({
+                "tool_call_id": "call_slides_1"
+            }),
+        };
+
+        stamp_outbound_topic_and_sender(
+            &mut msg,
+            Some("slides browser-deck-abc123"),
+            Some("@octos_weather:localhost"),
+        );
+
+        assert_eq!(
+            msg.metadata.get("topic").and_then(|value| value.as_str()),
+            Some("slides browser-deck-abc123")
+        );
+        assert_eq!(
+            msg.metadata
+                .get(METADATA_SENDER_USER_ID)
+                .and_then(|value| value.as_str()),
+            Some("@octos_weather:localhost")
+        );
+        assert_eq!(
+            msg.metadata
+                .get("tool_call_id")
+                .and_then(|value| value.as_str()),
+            Some("call_slides_1")
+        );
+    }
+
     #[tokio::test]
     async fn test_profile_session_keys_are_persisted_separately() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -6611,5 +6715,41 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn auto_deliver_report_file_allows_markdown_only_sessions() {
+        let files = vec![PathBuf::from("/tmp/report.md")];
+        assert!(should_auto_deliver_report_file(
+            None,
+            &files,
+            Path::new("/tmp/report.md")
+        ));
+    }
+
+    #[test]
+    fn auto_deliver_report_file_skips_slides_topics() {
+        let files = vec![
+            PathBuf::from("/tmp/slides/demo/memory.md"),
+            PathBuf::from("/tmp/slides/demo/output/deck.pptx"),
+        ];
+        assert!(!should_auto_deliver_report_file(
+            Some("slides demo"),
+            &files,
+            Path::new("/tmp/slides/demo/memory.md")
+        ));
+    }
+
+    #[test]
+    fn auto_deliver_report_file_skips_when_richer_deliverable_exists() {
+        let files = vec![
+            PathBuf::from("/tmp/report.md"),
+            PathBuf::from("/tmp/output/index.html"),
+        ];
+        assert!(!should_auto_deliver_report_file(
+            Some("research demo"),
+            &files,
+            Path::new("/tmp/report.md")
+        ));
     }
 }

@@ -152,6 +152,7 @@ RULES:
 - BEFORE calling mofa_slides: run shell("node --check slides/{slug}/script.js") to validate syntax. Fix any errors before proceeding.
 - ALWAYS use input parameter: mofa_slides(input="slides/{slug}/script.js", out="slides/{slug}/output/deck.pptx", slide_dir="slides/{slug}/output/imgs")
 - NEVER pass slides array inline. ALWAYS use the input file.
+- After mofa_slides succeeds, DO NOT call send_file for the PPTX. The runtime auto-delivers the final deck artifact.
 - On failure: report error, do NOT retry via shell.
 - If `mofa_slides` is not available in the current tool list, explicitly tell the user slide generation is unavailable on this host. Do NOT retry via shell, run_pipeline, or alternative binaries.
 - Read slides/{slug}/memory.md before each response for context.
@@ -224,7 +225,7 @@ When user asks about progress ("做完了吗", "done?", "status"):
   count generated slides from the contract's preview artifact matches
 Report: X previews present, PPTX ready/not ready, generation running/verifying/delivering/completed/failed based on supervisor state, and list any failed contract checks or missing artifacts.
 
-Tools: mofa_slides, read_file, write_file, edit_file, shell, glob, send_file, check_background_tasks, check_workspace_contract
+Tools: mofa_slides, read_file, write_file, edit_file, shell, glob, check_background_tasks, check_workspace_contract
 "#
     )
 }
@@ -536,8 +537,9 @@ BUILD RULES:
 - Workspace policy lives at sites/{site_slug}/.octos-workspace.toml.
 - If template is quarto-lesson, run shell(\"quarto render\") from sites/{site_slug}/ when Quarto is available
 - If template is astro-site, nextjs-app, or react-vite:
+  - project-local npm cache is preconfigured in sites/{site_slug}/.npmrc
   - run shell(\"test -d node_modules || npm install\") from sites/{site_slug}/
-  - then run shell(\"npm run build\") from sites/{site_slug}/
+  - then run shell(\"ASTRO_TELEMETRY_DISABLED=1 npm run build\") from sites/{site_slug}/
 - Never write outside the project dir
 - Treat sites/{site_slug}/{session_file} as the source of truth for template, preview path, and build output
 
@@ -729,6 +731,14 @@ fn write_site_support_files(
 
     std::fs::write(project_dir.join("changelog.md"), "# Changelog\n\n")
         .map_err(|e| format!("write changelog.md failed: {e}"))?;
+
+    std::fs::create_dir_all(project_dir.join(".npm-cache"))
+        .map_err(|e| format!("create .npm-cache dir failed: {e}"))?;
+    std::fs::write(
+        project_dir.join(".npmrc"),
+        "cache=.npm-cache\nfund=false\nupdate-notifier=false\n",
+    )
+    .map_err(|e| format!("write .npmrc failed: {e}"))?;
 
     Ok(())
 }
@@ -960,10 +970,12 @@ mod tests {
         assert!(prompt.contains("workspace state tells you what is true about the deliverable"));
         assert!(prompt.contains("If `mofa_slides` is not available"));
         assert!(prompt.contains("Runtime owns workspace contract enforcement"));
+        assert!(prompt.contains("DO NOT call send_file for the PPTX"));
         assert!(prompt.contains("PROMPT-OWNED GUIDANCE"));
         assert!(!prompt.contains("glob(\"slides/{slug}/output/*.pptx\")"));
         assert!(!prompt.contains("On every meaningful edit: increment NNN"));
         assert!(!prompt.contains("ps aux | grep mofa_slides | grep -v grep"));
+        assert!(!prompt.contains("Tools: mofa_slides, read_file, write_file, edit_file, shell, glob, send_file"));
     }
 
     #[test]
@@ -1016,6 +1028,23 @@ mod tests {
         assert!(prompt.contains("website builder"));
         assert!(prompt.contains("sites/vision-forum/mofa-site-session.json"));
         assert!(prompt.contains("/api/preview/<profile-id>/<session-id>/vision-forum/"));
+        assert!(prompt.contains(".npmrc"));
+        assert!(prompt.contains("ASTRO_TELEMETRY_DISABLED=1 npm run build"));
+    }
+
+    #[test]
+    fn should_write_site_local_npmrc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let metadata = build_site_project_metadata("dspfac", "site-session-123", "site astro", tmp.path())
+            .expect("site metadata");
+        let project_dir = tmp.path().join(&metadata.project_dir);
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        write_site_support_files(&project_dir, &metadata).expect("write site support files");
+
+        let npmrc = std::fs::read_to_string(project_dir.join(".npmrc")).unwrap();
+        assert!(npmrc.contains("cache=.npm-cache"));
+        assert!(project_dir.join(".npm-cache").is_dir());
     }
 
     #[test]
