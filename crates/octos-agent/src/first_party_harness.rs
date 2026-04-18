@@ -25,6 +25,12 @@ impl FirstPartyHarnessName {
         }
     }
 
+    pub fn descriptor(
+        self,
+    ) -> &'static crate::first_party_harness_catalog::FirstPartyHarnessDescriptor {
+        crate::first_party_harness_catalog::first_party_harness_descriptor(self)
+    }
+
     pub fn manifest(self) -> FirstPartyHarnessManifest {
         first_party_harness_entry(self).load()
     }
@@ -207,6 +213,14 @@ mod tests {
 
         assert_eq!(manifest.id, "first_party.slides");
         assert_eq!(manifest.workflow.label, "Slides deliverable");
+    }
+
+    #[test]
+    fn harness_name_exposes_descriptor_view() {
+        let descriptor = FirstPartyHarnessName::Slides.descriptor();
+
+        assert_eq!(descriptor.manifest_id, "first_party.slides");
+        assert_eq!(descriptor.output_kind, "presentation");
     }
 
     #[test]

@@ -16,6 +16,7 @@ mod compaction;
 pub mod event_bus;
 pub mod exec_env;
 pub mod first_party_harness;
+pub mod first_party_harness_catalog;
 pub mod hooks;
 pub mod loop_detect;
 pub mod mcp;
@@ -48,6 +49,10 @@ pub use first_party_harness::{
     FirstPartyHarnessManifest, FirstPartyHarnessName, FirstPartyHarnessRegistryEntry,
     FirstPartyTerminalOutput, FirstPartyWorkflowDeclaration, FirstPartyWorkflowLimits,
     first_party_harness_entry, first_party_harness_registry, resolve_first_party_harness_by_id,
+};
+pub use first_party_harness_catalog::{
+    FirstPartyHarnessDescriptor, first_party_harness_catalog, first_party_harness_descriptor,
+    resolve_first_party_harness_descriptor_by_id,
 };
 pub use hooks::{HookConfig, HookContext, HookEvent, HookExecutor};
 pub use mcp::{McpClient, McpServerConfig};
