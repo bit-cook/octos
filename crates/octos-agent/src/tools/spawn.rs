@@ -21,6 +21,8 @@ use crate::workspace_git::{
 };
 use crate::{Agent, AgentConfig};
 
+const MAX_ACTIVE_CODING_CHILD_SESSIONS_PER_PARENT: usize = 2;
+
 /// Callback for delivering background task results directly to the session actor.
 /// Returns `true` if the result was delivered, `false` if the actor is dead
 /// (caller should fall back to the InboundMessage relay path).
@@ -181,6 +183,39 @@ fn record_terminal_result_reason(kind: BackgroundResultKind, reason: &'static st
 
 fn record_retry(reason: &'static str) {
     counter!("octos_retry_total", "reason" => reason.to_string()).increment(1);
+}
+
+fn record_coding_fanout_limit_hit() {
+    counter!("octos_coding_child_session_limit_total").increment(1);
+}
+
+fn is_coding_tool_name(name: &str) -> bool {
+    matches!(
+        name,
+        "shell"
+            | "git"
+            | "read_file"
+            | "write_file"
+            | "edit_file"
+            | "grep_tool"
+            | "list_dir"
+            | "code_structure"
+    )
+}
+
+fn is_coding_spawn_request(allowed_tools: &[String], workflow: Option<&WorkflowMetadata>) -> bool {
+    if workflow.is_some() {
+        return false;
+    }
+    allowed_tools.iter().any(|tool| is_coding_tool_name(tool))
+}
+
+fn active_child_session_count_for_parent(supervisor: &TaskSupervisor, session_key: &str) -> usize {
+    supervisor
+        .get_tasks_for_session(session_key)
+        .into_iter()
+        .filter(|task| task.status.is_active() && task.child_session_key.is_some())
+        .count()
 }
 
 /// Tool that spawns background worker agents for long-running tasks.
@@ -973,12 +1008,6 @@ impl Tool for SpawnTool {
         let input: Input =
             serde_json::from_value(args.clone()).wrap_err("invalid spawn tool input")?;
 
-        let worker_num = self.worker_count.fetch_add(1, Ordering::SeqCst);
-        let worker_id = AgentId::new(format!("subagent-{worker_num}"));
-        let label = input
-            .label
-            .unwrap_or_else(|| input.task.chars().take(60).collect());
-
         // Build the task prompt (optionally prepend context)
         let task_desc = match &input.context {
             Some(ctx) => format!("{ctx}\n\n{}", input.task),
@@ -988,6 +1017,31 @@ impl Tool for SpawnTool {
         let allowed_tools = input.allowed_tools.clone();
         let workflow = input.workflow.clone();
         let is_sync = input.mode == "sync";
+
+        if !is_sync
+            && is_coding_spawn_request(&allowed_tools, workflow.as_ref())
+            && let (Some(supervisor), Some(session_key)) =
+                (self.task_supervisor.as_ref(), self.session_key.as_deref())
+        {
+            let active_children = active_child_session_count_for_parent(supervisor, session_key);
+            if active_children >= MAX_ACTIVE_CODING_CHILD_SESSIONS_PER_PARENT {
+                record_coding_fanout_limit_hit();
+                return Ok(ToolResult {
+                    output: format!(
+                        "[SESSION LIMIT] Coding child-session fanout is capped at {} active workers per session. Wait for existing child sessions to finish before spawning more coding workers.",
+                        MAX_ACTIVE_CODING_CHILD_SESSIONS_PER_PARENT
+                    ),
+                    success: false,
+                    ..Default::default()
+                });
+            }
+        }
+
+        let worker_num = self.worker_count.fetch_add(1, Ordering::SeqCst);
+        let worker_id = AgentId::new(format!("subagent-{worker_num}"));
+        let label = input
+            .label
+            .unwrap_or_else(|| input.task.chars().take(60).collect());
 
         info!(
             worker_id = %worker_id,
@@ -2073,6 +2127,119 @@ mod tests {
             );
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+    }
+
+    #[tokio::test]
+    async fn test_background_coding_spawn_rejects_third_active_child_session() {
+        let (in_tx, _in_rx) = tokio::sync::mpsc::channel(16);
+        let supervisor = Arc::new(TaskSupervisor::new());
+        let tool = SpawnTool::new(
+            Arc::new(MockProvider),
+            Arc::new(create_test_store().await),
+            PathBuf::from("/tmp"),
+            in_tx,
+        )
+        .with_task_supervisor(
+            supervisor.clone(),
+            "api:test-session",
+            PathBuf::from("/tmp/tasks.jsonl"),
+        );
+
+        let first = supervisor.register_with_lineage(
+            "coding-child-a",
+            "spawn-call-a",
+            Some("api:test-session"),
+            None,
+        );
+        supervisor.mark_running(&first);
+
+        let second = supervisor.register_with_lineage(
+            "coding-child-b",
+            "spawn-call-b",
+            Some("api:test-session"),
+            None,
+        );
+        supervisor.mark_running(&second);
+
+        let result = tool
+            .execute(&serde_json::json!({
+                "task": "Inspect the repo and suggest one fix",
+                "label": "coding-child-c",
+                "mode": "background",
+                "allowed_tools": ["shell"]
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.success);
+        assert!(result.output.contains("[SESSION LIMIT]"));
+        assert!(result.output.contains("child-session fanout"));
+
+        let tasks = supervisor.get_tasks_for_session("api:test-session");
+        assert_eq!(
+            tasks.len(),
+            2,
+            "should not register a third coding child session"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_background_non_coding_spawn_not_blocked_by_coding_child_limit() {
+        let (in_tx, _in_rx) = tokio::sync::mpsc::channel(16);
+        let supervisor = Arc::new(TaskSupervisor::new());
+        let tool = SpawnTool::new(
+            Arc::new(MockProvider),
+            Arc::new(create_test_store().await),
+            PathBuf::from("/tmp"),
+            in_tx,
+        )
+        .with_task_supervisor(
+            supervisor.clone(),
+            "api:test-session",
+            PathBuf::from("/tmp/tasks.jsonl"),
+        );
+
+        let first = supervisor.register_with_lineage(
+            "coding-child-a",
+            "spawn-call-a",
+            Some("api:test-session"),
+            None,
+        );
+        supervisor.mark_running(&first);
+
+        let second = supervisor.register_with_lineage(
+            "coding-child-b",
+            "spawn-call-b",
+            Some("api:test-session"),
+            None,
+        );
+        supervisor.mark_running(&second);
+
+        let result = tool
+            .execute(&serde_json::json!({
+                "task": "Produce a short podcast",
+                "label": "Research podcast",
+                "mode": "background",
+                "allowed_tools": ["podcast_generate"],
+                "workflow": {
+                    "workflow_kind": "research_podcast",
+                    "current_phase": "generate_audio",
+                    "allowed_tools": ["podcast_generate"],
+                    "terminal_output": {
+                        "deliver_final_artifact_only": true,
+                        "deliver_media_only": true,
+                        "forbid_intermediate_files": true,
+                        "required_artifact_kind": "audio"
+                    }
+                }
+            }))
+            .await
+            .unwrap();
+
+        assert!(
+            result.success,
+            "non-coding background workflows should bypass the coding fanout cap"
+        );
     }
 
     #[test]

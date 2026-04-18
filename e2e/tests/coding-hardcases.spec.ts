@@ -30,6 +30,20 @@ import {
 
 test.setTimeout(600_000);
 
+const BASE = process.env.OCTOS_TEST_URL || 'https://dspfac.crew.ominix.io';
+const TOKEN = process.env.OCTOS_AUTH_TOKEN || 'octos-admin-2026';
+const PROFILE = process.env.OCTOS_PROFILE || 'dspfac';
+
+async function getTasks(sessionId: string): Promise<any[]> {
+  const resp = await fetch(`${BASE}/api/sessions/${encodeURIComponent(sessionId)}/tasks`, {
+    headers: { Authorization: `Bearer ${TOKEN}`, 'X-Profile-Id': PROFILE },
+  });
+  if (!resp.ok) {
+    throw new Error(`failed to fetch tasks for ${sessionId}: ${resp.status}`);
+  }
+  return resp.json();
+}
+
 test.describe('Phase 3 coding hard cases', () => {
   test('repo edit task writes a bounded diff and exposes reviewable output', async ({
     page,
@@ -109,12 +123,69 @@ test.describe('Phase 3 coding hard cases', () => {
     test.expect(response.length).toBeLessThan(4_000);
   });
 
-  test.fixme('coding fanout creates bounded child sessions and joins them cleanly', async ({
+  test('coding fanout creates bounded child sessions and joins them cleanly', async ({
     page,
   }) => {
     await login(page);
     await createNewSession(page);
-    await sendAndWait(page, 'TODO: trigger bounded child-session coding fanout');
+
+    const sessionId = await page.evaluate(() => localStorage.getItem('octos_current_session'));
+    if (!sessionId) {
+      throw new Error('missing current session id');
+    }
+
+    const marker = `phase3-fanout-${Date.now()}`;
+    const prompt = [
+      'Use the spawn tool in background mode for coding reconnaissance.',
+      'Attempt exactly three coding child sessions.',
+      'Each child must set allowed_tools to ["shell"] and no other tools.',
+      `Use labels ${marker}-a, ${marker}-b, and ${marker}-c.`,
+      'Each child should only run a tiny shell command that prints its label, then stop.',
+      'The parent must not run shell directly.',
+      'After dispatching what is allowed, briefly say delegation started and stop.',
+    ].join(' ');
+
+    await sendAndWait(page, prompt, {
+      maxWait: 120_000,
+      label: 'coding-fanout',
+    });
+
+    await test.expect
+      .poll(
+        async () => {
+          const tasks = await getTasks(sessionId);
+          return tasks.filter((task: any) => task.child_session_key).length;
+        },
+        {
+          timeout: 90_000,
+          message: 'expected bounded coding child sessions to be created',
+        },
+      )
+      .toBe(2);
+
+    await test.expect
+      .poll(
+        async () => {
+          const tasks = await getTasks(sessionId);
+          const codingTasks = tasks.filter((task: any) => task.child_session_key);
+          return (
+            codingTasks.length === 2 &&
+            codingTasks.every(
+              (task: any) =>
+                ['completed', 'failed'].includes(task.status) &&
+                ['completed', 'retryable_failure', 'terminal_failure'].includes(
+                  task.child_terminal_state,
+                ) &&
+                ['joined', 'orphaned'].includes(task.child_join_state),
+            )
+          );
+        },
+        {
+          timeout: 120_000,
+          message: 'expected bounded coding child sessions to terminate with structured join state',
+        },
+      )
+      .toBe(true);
   });
 
   test.fixme('long idle resume keeps the same coding turn after reconnect', async ({ page }) => {
