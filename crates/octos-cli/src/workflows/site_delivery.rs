@@ -1,6 +1,6 @@
 use crate::workflow_runtime::workflow_families::SiteTemplate;
 use crate::workflow_runtime::{WorkflowInstance, WorkflowKind};
-use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
+use octos_agent::{FirstPartyHarnessManifest, FirstPartyHarnessName, WorkspacePolicy};
 
 pub fn build_output_dir_for_template_kind(template: SiteTemplate) -> &'static str {
     template.output_dir()
@@ -20,7 +20,7 @@ pub fn workspace_policy_for_template(template: &str) -> WorkspacePolicy {
 }
 
 pub fn build() -> WorkflowInstance {
-    super::build_first_party_workflow(WorkflowKind::Site, FirstPartyHarnessManifest::sites())
+    super::build_first_party_workflow(WorkflowKind::Site, FirstPartyHarnessName::Sites.manifest())
 }
 
 #[cfg(test)]
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn site_workflow_uses_first_party_harness_terminal_output() {
         let workflow = build();
-        let harness = FirstPartyHarnessManifest::sites();
+        let harness = FirstPartyHarnessName::Sites.manifest();
 
         assert_eq!(
             workflow.terminal_output.required_artifact_kind,
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn site_workflow_uses_first_party_harness_metadata() {
         let workflow = build();
-        let harness = FirstPartyHarnessManifest::sites();
+        let harness = FirstPartyHarnessName::Sites.manifest();
 
         assert_eq!(workflow.label, harness.workflow.label);
         assert_eq!(workflow.ack_message, harness.workflow.ack_message);

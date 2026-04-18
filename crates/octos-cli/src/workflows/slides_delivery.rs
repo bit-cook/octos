@@ -1,12 +1,15 @@
 use crate::workflow_runtime::{WorkflowInstance, WorkflowKind};
-use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
+use octos_agent::{FirstPartyHarnessName, WorkspacePolicy};
 
 pub fn build() -> WorkflowInstance {
-    super::build_first_party_workflow(WorkflowKind::Slides, FirstPartyHarnessManifest::slides())
+    super::build_first_party_workflow(
+        WorkflowKind::Slides,
+        FirstPartyHarnessName::Slides.manifest(),
+    )
 }
 
 pub fn workspace_policy() -> WorkspacePolicy {
-    FirstPartyHarnessManifest::slides().workspace_policy()
+    FirstPartyHarnessName::Slides.manifest().workspace_policy()
 }
 
 #[cfg(test)]
@@ -63,7 +66,7 @@ mod tests {
     #[test]
     fn slides_workflow_uses_first_party_harness_terminal_output() {
         let workflow = build();
-        let harness = FirstPartyHarnessManifest::slides();
+        let harness = FirstPartyHarnessName::Slides.manifest();
 
         assert_eq!(
             workflow.terminal_output.required_artifact_kind,
@@ -78,7 +81,7 @@ mod tests {
     #[test]
     fn slides_workflow_uses_first_party_harness_metadata() {
         let workflow = build();
-        let harness = FirstPartyHarnessManifest::slides();
+        let harness = FirstPartyHarnessName::Slides.manifest();
 
         assert_eq!(workflow.label, harness.workflow.label);
         assert_eq!(workflow.ack_message, harness.workflow.ack_message);

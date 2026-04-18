@@ -10,6 +10,52 @@ use crate::workspace_policy::{
 const SLIDES_MANIFEST_TOML: &str = include_str!("first_party_harness/slides.toml");
 const SITES_MANIFEST_TOML: &str = include_str!("first_party_harness/sites.toml");
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FirstPartyHarnessName {
+    Slides,
+    Sites,
+}
+
+impl FirstPartyHarnessName {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Slides => "slides",
+            Self::Sites => "sites",
+        }
+    }
+
+    pub fn manifest(self) -> FirstPartyHarnessManifest {
+        first_party_harness_entry(self).load()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FirstPartyHarnessRegistryEntry {
+    pub name: FirstPartyHarnessName,
+    pub manifest_id: &'static str,
+    pub manifest_asset: &'static str,
+}
+
+impl FirstPartyHarnessRegistryEntry {
+    pub fn load(self) -> FirstPartyHarnessManifest {
+        bundled_manifest(self.manifest_asset, manifest_source(self.name))
+    }
+}
+
+const FIRST_PARTY_HARNESS_REGISTRY: [FirstPartyHarnessRegistryEntry; 2] = [
+    FirstPartyHarnessRegistryEntry {
+        name: FirstPartyHarnessName::Slides,
+        manifest_id: "first_party.slides",
+        manifest_asset: "slides.toml",
+    },
+    FirstPartyHarnessRegistryEntry {
+        name: FirstPartyHarnessName::Sites,
+        manifest_id: "first_party.sites",
+        manifest_asset: "sites.toml",
+    },
+];
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirstPartyHarnessManifest {
     pub id: String,
@@ -60,11 +106,11 @@ pub struct FirstPartyTerminalOutput {
 
 impl FirstPartyHarnessManifest {
     pub fn slides() -> Self {
-        bundled_manifest("slides.toml", SLIDES_MANIFEST_TOML)
+        FirstPartyHarnessName::Slides.manifest()
     }
 
     pub fn sites() -> Self {
-        bundled_manifest("sites.toml", SITES_MANIFEST_TOML)
+        FirstPartyHarnessName::Sites.manifest()
     }
 
     pub fn site_with_build_output(build_output_dir: &str) -> Self {
@@ -100,6 +146,38 @@ impl FirstPartyHarnessManifest {
     }
 }
 
+pub fn first_party_harness_registry() -> &'static [FirstPartyHarnessRegistryEntry] {
+    &FIRST_PARTY_HARNESS_REGISTRY
+}
+
+pub fn first_party_harness_entry(
+    name: FirstPartyHarnessName,
+) -> &'static FirstPartyHarnessRegistryEntry {
+    first_party_harness_registry()
+        .iter()
+        .find(|entry| entry.name == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "missing first-party harness registry entry for {}",
+                name.as_str()
+            )
+        })
+}
+
+pub fn resolve_first_party_harness_by_id(id: &str) -> Option<FirstPartyHarnessManifest> {
+    first_party_harness_registry()
+        .iter()
+        .find(|entry| entry.manifest_id == id)
+        .map(|entry| entry.load())
+}
+
+fn manifest_source(name: FirstPartyHarnessName) -> &'static str {
+    match name {
+        FirstPartyHarnessName::Slides => SLIDES_MANIFEST_TOML,
+        FirstPartyHarnessName::Sites => SITES_MANIFEST_TOML,
+    }
+}
+
 fn bundled_manifest(name: &str, source: &str) -> FirstPartyHarnessManifest {
     toml::from_str(source).unwrap_or_else(|error| {
         panic!("bundled first-party harness manifest {name} should parse: {error}")
@@ -112,8 +190,28 @@ mod tests {
     use crate::WorkspacePolicyKind;
 
     #[test]
+    fn registry_lists_bundled_first_party_manifests() {
+        let registry = first_party_harness_registry();
+
+        assert_eq!(registry.len(), 2);
+        assert_eq!(registry[0].name, FirstPartyHarnessName::Slides);
+        assert_eq!(registry[0].manifest_id, "first_party.slides");
+        assert_eq!(registry[1].name, FirstPartyHarnessName::Sites);
+        assert_eq!(registry[1].manifest_id, "first_party.sites");
+    }
+
+    #[test]
+    fn registry_resolves_manifest_by_id() {
+        let manifest = resolve_first_party_harness_by_id("first_party.slides")
+            .expect("slides manifest should resolve");
+
+        assert_eq!(manifest.id, "first_party.slides");
+        assert_eq!(manifest.workflow.label, "Slides deliverable");
+    }
+
+    #[test]
     fn slides_manifest_declares_expected_contract() {
-        let manifest = FirstPartyHarnessManifest::slides();
+        let manifest = FirstPartyHarnessName::Slides.manifest();
 
         assert_eq!(manifest.id, "first_party.slides");
         assert_eq!(manifest.workspace.kind, WorkspacePolicyKind::Slides);
@@ -177,7 +275,7 @@ mod tests {
 
     #[test]
     fn sites_manifest_bundles_only_generic_contract() {
-        let manifest = FirstPartyHarnessManifest::sites();
+        let manifest = FirstPartyHarnessName::Sites.manifest();
 
         assert_eq!(manifest.id, "first_party.sites");
         assert!(manifest.validation.on_turn_end.is_empty());
