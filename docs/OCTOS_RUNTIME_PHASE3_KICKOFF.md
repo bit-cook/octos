@@ -85,6 +85,9 @@ Deliverables:
 - concrete regression list with owner and disposition
 - explicit closure note for known flakes vs real bugs
 - no hidden widening during soak
+- executable runbook and evidence-capture entry point for each soak run:
+  - `docs/OCTOS_PHASE3_SOAK_RUNBOOK.md`
+  - `scripts/phase3-canary-snapshot.sh`
 
 Exit criteria:
 
