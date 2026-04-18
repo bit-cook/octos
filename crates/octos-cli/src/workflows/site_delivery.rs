@@ -2,7 +2,7 @@ use crate::workflow_runtime::workflow_families::SiteTemplate;
 use crate::workflow_runtime::{
     WorkflowInstance, WorkflowKind, WorkflowLimits, WorkflowPhase, WorkflowTerminalOutput,
 };
-use octos_agent::WorkspacePolicy;
+use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
 
 pub fn build_output_dir_for_template_kind(template: SiteTemplate) -> &'static str {
     template.output_dir()
@@ -13,7 +13,8 @@ pub fn build_output_dir_for_template(template: &str) -> &'static str {
 }
 
 pub fn workspace_policy_for_template_kind(template: SiteTemplate) -> WorkspacePolicy {
-    WorkspacePolicy::for_site_build_output(build_output_dir_for_template_kind(template))
+    FirstPartyHarnessManifest::site_with_build_output(build_output_dir_for_template_kind(template))
+        .workspace_policy()
 }
 
 pub fn workspace_policy_for_template(template: &str) -> WorkspacePolicy {
@@ -21,6 +22,7 @@ pub fn workspace_policy_for_template(template: &str) -> WorkspacePolicy {
 }
 
 pub fn build() -> WorkflowInstance {
+    let harness = FirstPartyHarnessManifest::sites();
     WorkflowInstance {
         kind: WorkflowKind::Site,
         label: "Site deliverable".to_string(),
@@ -43,10 +45,10 @@ pub fn build() -> WorkflowInstance {
             max_generate_calls: Some(1),
         },
         terminal_output: WorkflowTerminalOutput {
-            deliver_final_artifact_only: true,
-            deliver_media_only: false,
-            forbid_intermediate_files: true,
-            required_artifact_kind: "site".into(),
+            deliver_final_artifact_only: harness.terminal_output.deliver_final_artifact_only,
+            deliver_media_only: harness.terminal_output.deliver_media_only,
+            forbid_intermediate_files: harness.terminal_output.forbid_intermediate_files,
+            required_artifact_kind: harness.terminal_output.required_artifact_kind,
         },
         additional_instructions: "You are a background site builder. Follow the runtime-owned phases in order: scaffold, build, deliver_result. Read the session metadata to discover the selected template and build output directory, keep edits inside the project root, and deliver only the final built site entrypoint. Do not send intermediate logs, scratch files, or alternate build artifacts.".to_string(),
     }
@@ -65,10 +67,12 @@ mod tests {
         assert!(workflow.terminal_output.deliver_final_artifact_only);
         assert!(!workflow.terminal_output.deliver_media_only);
         assert!(workflow.terminal_output.forbid_intermediate_files);
-        assert!(workflow
-            .allowed_tools
-            .iter()
-            .any(|tool| tool == "check_workspace_contract"));
+        assert!(
+            workflow
+                .allowed_tools
+                .iter()
+                .any(|tool| tool == "check_workspace_contract")
+        );
     }
 
     #[test]
@@ -103,8 +107,27 @@ mod tests {
             vec!["file_exists:out/index.html"]
         );
         assert_eq!(
-            policy.artifacts.entries.get("entrypoint").map(String::as_str),
+            policy
+                .artifacts
+                .entries
+                .get("entrypoint")
+                .map(String::as_str),
             Some("out/index.html")
+        );
+    }
+
+    #[test]
+    fn site_workflow_uses_first_party_harness_terminal_output() {
+        let workflow = build();
+        let harness = FirstPartyHarnessManifest::sites();
+
+        assert_eq!(
+            workflow.terminal_output.required_artifact_kind,
+            harness.terminal_output.required_artifact_kind
+        );
+        assert_eq!(
+            workflow.terminal_output.deliver_final_artifact_only,
+            harness.terminal_output.deliver_final_artifact_only
         );
     }
 }

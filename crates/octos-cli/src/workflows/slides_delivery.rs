@@ -1,9 +1,10 @@
 use crate::workflow_runtime::{
     WorkflowInstance, WorkflowKind, WorkflowLimits, WorkflowPhase, WorkflowTerminalOutput,
 };
-use octos_agent::{WorkspacePolicy, WorkspaceProjectKind};
+use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
 
 pub fn build() -> WorkflowInstance {
+    let harness = FirstPartyHarnessManifest::slides();
     WorkflowInstance {
         kind: WorkflowKind::Slides,
         label: "Slides deliverable".to_string(),
@@ -27,17 +28,17 @@ pub fn build() -> WorkflowInstance {
             max_generate_calls: Some(1),
         },
         terminal_output: WorkflowTerminalOutput {
-            deliver_final_artifact_only: true,
-            deliver_media_only: false,
-            forbid_intermediate_files: true,
-            required_artifact_kind: "presentation".into(),
+            deliver_final_artifact_only: harness.terminal_output.deliver_final_artifact_only,
+            deliver_media_only: harness.terminal_output.deliver_media_only,
+            forbid_intermediate_files: harness.terminal_output.forbid_intermediate_files,
+            required_artifact_kind: harness.terminal_output.required_artifact_kind,
         },
         additional_instructions: "You are a background slides producer. Follow the runtime-owned phases in order: design, generate_deck, deliver_result. Write the slide script first, validate it before generation, call mofa_slides once, and deliver only the final deck artifact. Do not send intermediate previews, scratch PNGs, or alternate deck exports.".to_string(),
     }
 }
 
 pub fn workspace_policy() -> WorkspacePolicy {
-    WorkspacePolicy::for_kind(WorkspaceProjectKind::Slides)
+    FirstPartyHarnessManifest::slides().workspace_policy()
 }
 
 #[cfg(test)]
@@ -49,25 +50,60 @@ mod tests {
         let workflow = build();
         assert_eq!(workflow.kind, WorkflowKind::Slides);
         assert_eq!(workflow.current_phase.as_str(), "design");
-        assert_eq!(workflow.terminal_output.required_artifact_kind, "presentation");
+        assert_eq!(
+            workflow.terminal_output.required_artifact_kind,
+            "presentation"
+        );
         assert!(workflow.terminal_output.deliver_final_artifact_only);
         assert!(!workflow.terminal_output.deliver_media_only);
         assert!(workflow.terminal_output.forbid_intermediate_files);
-        assert!(workflow.allowed_tools.iter().any(|tool| tool == "mofa_slides"));
-        assert!(workflow
-            .allowed_tools
-            .iter()
-            .any(|tool| tool == "check_workspace_contract"));
+        assert!(
+            workflow
+                .allowed_tools
+                .iter()
+                .any(|tool| tool == "mofa_slides")
+        );
+        assert!(
+            workflow
+                .allowed_tools
+                .iter()
+                .any(|tool| tool == "check_workspace_contract")
+        );
     }
 
     #[test]
     fn slides_workspace_policy_is_standardized() {
         let policy = workspace_policy();
-        assert_eq!(policy.workspace.kind, octos_agent::WorkspacePolicyKind::Slides);
-        assert!(policy.validation.on_turn_end.contains(&"file_exists:script.js".to_string()));
-        assert!(policy
-            .validation
-            .on_completion
-            .contains(&"file_exists:output/*.pptx".to_string()));
+        assert_eq!(
+            policy.workspace.kind,
+            octos_agent::WorkspacePolicyKind::Slides
+        );
+        assert!(
+            policy
+                .validation
+                .on_turn_end
+                .contains(&"file_exists:script.js".to_string())
+        );
+        assert!(
+            policy
+                .validation
+                .on_completion
+                .contains(&"file_exists:output/*.pptx".to_string())
+        );
+    }
+
+    #[test]
+    fn slides_workflow_uses_first_party_harness_terminal_output() {
+        let workflow = build();
+        let harness = FirstPartyHarnessManifest::slides();
+
+        assert_eq!(
+            workflow.terminal_output.required_artifact_kind,
+            harness.terminal_output.required_artifact_kind
+        );
+        assert_eq!(
+            workflow.terminal_output.deliver_final_artifact_only,
+            harness.terminal_output.deliver_final_artifact_only
+        );
     }
 }

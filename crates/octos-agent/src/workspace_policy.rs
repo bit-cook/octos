@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
+use crate::first_party_harness::FirstPartyHarnessManifest;
 use crate::workspace_git::WorkspaceProjectKind;
 
 pub const WORKSPACE_POLICY_FILE: &str = ".octos-workspace.toml";
@@ -141,74 +142,8 @@ impl WorkspaceSpawnTaskPolicy {
 impl WorkspacePolicy {
     pub fn for_kind(kind: WorkspaceProjectKind) -> Self {
         match kind {
-            WorkspaceProjectKind::Slides => Self {
-                workspace: WorkspacePolicyWorkspace {
-                    kind: WorkspacePolicyKind::Slides,
-                },
-                version_control: WorkspaceVersionControlPolicy {
-                    provider: WorkspaceVersionControlProvider::Git,
-                    auto_init: true,
-                    trigger: WorkspaceSnapshotTrigger::TurnEnd,
-                    fail_on_error: true,
-                },
-                tracking: WorkspaceTrackingPolicy {
-                    ignore: vec![
-                        "history/**".into(),
-                        "output/**".into(),
-                        "skill-output/**".into(),
-                        "*.pptx".into(),
-                        "*.tmp".into(),
-                        ".DS_Store".into(),
-                    ],
-                },
-                validation: ValidationPolicy {
-                    on_turn_end: vec![
-                        "file_exists:script.js".into(),
-                        "file_exists:memory.md".into(),
-                        "file_exists:changelog.md".into(),
-                    ],
-                    on_source_change: Vec::new(),
-                    on_completion: vec![
-                        "file_exists:output/*.pptx".into(),
-                        "file_exists:output/**/slide-*.png".into(),
-                    ],
-                },
-                artifacts: WorkspaceArtifactsPolicy {
-                    entries: BTreeMap::from([
-                        ("deck".into(), "output/*.pptx".into()),
-                        ("previews".into(), "output/**/slide-*.png".into()),
-                    ]),
-                },
-                spawn_tasks: BTreeMap::new(),
-            },
-            WorkspaceProjectKind::Sites => Self {
-                workspace: WorkspacePolicyWorkspace {
-                    kind: WorkspacePolicyKind::Sites,
-                },
-                version_control: WorkspaceVersionControlPolicy {
-                    provider: WorkspaceVersionControlProvider::Git,
-                    auto_init: true,
-                    trigger: WorkspaceSnapshotTrigger::TurnEnd,
-                    fail_on_error: true,
-                },
-                tracking: WorkspaceTrackingPolicy {
-                    ignore: vec![
-                        "node_modules/**".into(),
-                        "dist/**".into(),
-                        "out/**".into(),
-                        "docs/**".into(),
-                        "build/**".into(),
-                        ".astro/**".into(),
-                        ".next/**".into(),
-                        ".quarto/**".into(),
-                        "*.log".into(),
-                        ".DS_Store".into(),
-                    ],
-                },
-                validation: ValidationPolicy::default(),
-                artifacts: WorkspaceArtifactsPolicy::default(),
-                spawn_tasks: BTreeMap::new(),
-            },
+            WorkspaceProjectKind::Slides => FirstPartyHarnessManifest::slides().workspace_policy(),
+            WorkspaceProjectKind::Sites => FirstPartyHarnessManifest::sites().workspace_policy(),
         }
     }
 
@@ -266,23 +201,7 @@ impl WorkspacePolicy {
     }
 
     pub fn for_site_build_output(build_output_dir: &str) -> Self {
-        let mut policy = Self::for_kind(WorkspaceProjectKind::Sites);
-        policy.validation = ValidationPolicy {
-            on_turn_end: vec![
-                "file_exists:mofa-site-session.json".into(),
-                "file_exists:site-plan.json".into(),
-                "file_exists:optimized-prompt.md".into(),
-            ],
-            on_source_change: Vec::new(),
-            on_completion: vec![format!("file_exists:{build_output_dir}/index.html")],
-        };
-        policy.artifacts = WorkspaceArtifactsPolicy {
-            entries: BTreeMap::from([(
-                "entrypoint".into(),
-                format!("{build_output_dir}/index.html"),
-            )]),
-        };
-        policy
+        FirstPartyHarnessManifest::site_with_build_output(build_output_dir).workspace_policy()
     }
 }
 
@@ -410,7 +329,11 @@ mod tests {
             vec!["file_exists:dist/index.html"]
         );
         assert_eq!(
-            policy.artifacts.entries.get("entrypoint").map(String::as_str),
+            policy
+                .artifacts
+                .entries
+                .get("entrypoint")
+                .map(String::as_str),
             Some("dist/index.html")
         );
     }
@@ -512,7 +435,10 @@ mod tests {
             on_failure: Vec::new(),
         };
 
-        assert_eq!(task.delivery_actions(), &["notify_user:deliver".to_string()]);
+        assert_eq!(
+            task.delivery_actions(),
+            &["notify_user:deliver".to_string()]
+        );
     }
 
     #[test]

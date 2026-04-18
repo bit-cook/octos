@@ -15,6 +15,7 @@ pub mod bundled_app_skills;
 mod compaction;
 pub mod event_bus;
 pub mod exec_env;
+pub mod first_party_harness;
 pub mod hooks;
 pub mod loop_detect;
 pub mod mcp;
@@ -43,6 +44,7 @@ pub use agent::{
 };
 pub use event_bus::{EventBus, EventSubscriber};
 pub use exec_env::{DockerEnvironment, ExecEnvironment, ExecOutput, LocalEnvironment};
+pub use first_party_harness::{FirstPartyHarnessManifest, FirstPartyTerminalOutput};
 pub use hooks::{HookConfig, HookContext, HookEvent, HookExecutor};
 pub use mcp::{McpClient, McpServerConfig};
 pub use plugins::{PluginLoadResult, PluginLoader};
