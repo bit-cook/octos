@@ -1,0 +1,49 @@
+id = "first_party.sites"
+
+[workspace]
+kind = "sites"
+
+[version_control]
+provider = "git"
+auto_init = true
+trigger = "turn_end"
+fail_on_error = true
+
+[tracking]
+ignore = [
+  "node_modules/**",
+  "dist/**",
+  "out/**",
+  "docs/**",
+  "build/**",
+  ".astro/**",
+  ".next/**",
+  ".quarto/**",
+  "*.log",
+  ".DS_Store",
+]
+
+[workflow]
+label = "Site deliverable"
+ack_message = "Site generation has started in the background. Only the final verified site entrypoint will be delivered once the workspace contract is satisfied."
+initial_phase = "scaffold"
+allowed_tools = [
+  "read_file",
+  "write_file",
+  "edit_file",
+  "shell",
+  "glob",
+  "check_background_tasks",
+  "check_workspace_contract",
+]
+additional_instructions = "You are a background site builder. Follow the runtime-owned phases in order: scaffold, build, deliver_result. Read the session metadata to discover the selected template and build output directory, keep edits inside the project root, and deliver only the final built site entrypoint. Do not send intermediate logs, scratch files, or alternate build artifacts."
+
+[workflow.limits]
+max_dialogue_lines = 24
+max_generate_calls = 1
+
+[terminal_output]
+deliver_final_artifact_only = true
+deliver_media_only = false
+forbid_intermediate_files = true
+required_artifact_kind = "site"

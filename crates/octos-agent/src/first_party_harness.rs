@@ -3,10 +3,12 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::workspace_policy::{
-    ValidationPolicy, WorkspaceArtifactsPolicy, WorkspacePolicy, WorkspacePolicyKind,
-    WorkspacePolicyWorkspace, WorkspaceSnapshotTrigger, WorkspaceSpawnTaskPolicy,
-    WorkspaceTrackingPolicy, WorkspaceVersionControlPolicy, WorkspaceVersionControlProvider,
+    ValidationPolicy, WorkspaceArtifactsPolicy, WorkspacePolicy, WorkspacePolicyWorkspace,
+    WorkspaceSpawnTaskPolicy, WorkspaceTrackingPolicy, WorkspaceVersionControlPolicy,
 };
+
+const SLIDES_MANIFEST_TOML: &str = include_str!("first_party_harness/slides.toml");
+const SITES_MANIFEST_TOML: &str = include_str!("first_party_harness/sites.toml");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirstPartyHarnessManifest {
@@ -58,126 +60,11 @@ pub struct FirstPartyTerminalOutput {
 
 impl FirstPartyHarnessManifest {
     pub fn slides() -> Self {
-        Self {
-            id: "first_party.slides".into(),
-            workspace: WorkspacePolicyWorkspace {
-                kind: WorkspacePolicyKind::Slides,
-            },
-            version_control: git_turn_end_version_control(true),
-            tracking: WorkspaceTrackingPolicy {
-                ignore: vec![
-                    "history/**".into(),
-                    "output/**".into(),
-                    "skill-output/**".into(),
-                    "*.pptx".into(),
-                    "*.tmp".into(),
-                    ".DS_Store".into(),
-                ],
-            },
-            validation: ValidationPolicy {
-                on_turn_end: vec![
-                    "file_exists:script.js".into(),
-                    "file_exists:memory.md".into(),
-                    "file_exists:changelog.md".into(),
-                ],
-                on_source_change: Vec::new(),
-                on_completion: vec![
-                    "file_exists:output/*.pptx".into(),
-                    "file_exists:output/**/slide-*.png".into(),
-                ],
-            },
-            artifacts: WorkspaceArtifactsPolicy {
-                entries: BTreeMap::from([
-                    ("deck".into(), "output/*.pptx".into()),
-                    ("previews".into(), "output/**/slide-*.png".into()),
-                ]),
-            },
-            spawn_tasks: BTreeMap::new(),
-            workflow: FirstPartyWorkflowDeclaration {
-                label: "Slides deliverable".into(),
-                ack_message: "Slides generation has started in the background. Only the final deck will be delivered once the workspace contract is satisfied.".into(),
-                initial_phase: "design".into(),
-                allowed_tools: vec![
-                    "mofa_slides".into(),
-                    "read_file".into(),
-                    "write_file".into(),
-                    "edit_file".into(),
-                    "shell".into(),
-                    "glob".into(),
-                    "check_background_tasks".into(),
-                    "check_workspace_contract".into(),
-                ],
-                limits: FirstPartyWorkflowLimits {
-                    max_search_passes: None,
-                    max_pipeline_runs: None,
-                    max_dialogue_lines: Some(24),
-                    target_audio_minutes: None,
-                    max_generate_calls: Some(1),
-                },
-                additional_instructions: "You are a background slides producer. Follow the runtime-owned phases in order: design, generate_deck, deliver_result. Write the slide script first, validate it before generation, call mofa_slides once, and deliver only the final deck artifact. Do not send intermediate previews, scratch PNGs, or alternate deck exports.".into(),
-            },
-            terminal_output: FirstPartyTerminalOutput {
-                deliver_final_artifact_only: true,
-                deliver_media_only: false,
-                forbid_intermediate_files: true,
-                required_artifact_kind: "presentation".into(),
-            },
-        }
+        bundled_manifest("slides.toml", SLIDES_MANIFEST_TOML)
     }
 
     pub fn sites() -> Self {
-        Self {
-            id: "first_party.sites".into(),
-            workspace: WorkspacePolicyWorkspace {
-                kind: WorkspacePolicyKind::Sites,
-            },
-            version_control: git_turn_end_version_control(true),
-            tracking: WorkspaceTrackingPolicy {
-                ignore: vec![
-                    "node_modules/**".into(),
-                    "dist/**".into(),
-                    "out/**".into(),
-                    "docs/**".into(),
-                    "build/**".into(),
-                    ".astro/**".into(),
-                    ".next/**".into(),
-                    ".quarto/**".into(),
-                    "*.log".into(),
-                    ".DS_Store".into(),
-                ],
-            },
-            validation: ValidationPolicy::default(),
-            artifacts: WorkspaceArtifactsPolicy::default(),
-            spawn_tasks: BTreeMap::new(),
-            workflow: FirstPartyWorkflowDeclaration {
-                label: "Site deliverable".into(),
-                ack_message: "Site generation has started in the background. Only the final verified site entrypoint will be delivered once the workspace contract is satisfied.".into(),
-                initial_phase: "scaffold".into(),
-                allowed_tools: vec![
-                    "read_file".into(),
-                    "write_file".into(),
-                    "edit_file".into(),
-                    "shell".into(),
-                    "glob".into(),
-                    "check_background_tasks".into(),
-                    "check_workspace_contract".into(),
-                ],
-                limits: FirstPartyWorkflowLimits {
-                    max_search_passes: None,
-                    max_pipeline_runs: None,
-                    max_dialogue_lines: Some(24),
-                    target_audio_minutes: None,
-                    max_generate_calls: Some(1),
-                },
-                additional_instructions: "You are a background site builder. Follow the runtime-owned phases in order: scaffold, build, deliver_result. Read the session metadata to discover the selected template and build output directory, keep edits inside the project root, and deliver only the final built site entrypoint. Do not send intermediate logs, scratch files, or alternate build artifacts.".into(),
-            },
-            terminal_output: FirstPartyTerminalOutput {
-                deliver_final_artifact_only: true,
-                deliver_media_only: false,
-                forbid_intermediate_files: true,
-                required_artifact_kind: "site".into(),
-            },
-        }
+        bundled_manifest("sites.toml", SITES_MANIFEST_TOML)
     }
 
     pub fn site_with_build_output(build_output_dir: &str) -> Self {
@@ -213,18 +100,16 @@ impl FirstPartyHarnessManifest {
     }
 }
 
-fn git_turn_end_version_control(fail_on_error: bool) -> WorkspaceVersionControlPolicy {
-    WorkspaceVersionControlPolicy {
-        provider: WorkspaceVersionControlProvider::Git,
-        auto_init: true,
-        trigger: WorkspaceSnapshotTrigger::TurnEnd,
-        fail_on_error,
-    }
+fn bundled_manifest(name: &str, source: &str) -> FirstPartyHarnessManifest {
+    toml::from_str(source).unwrap_or_else(|error| {
+        panic!("bundled first-party harness manifest {name} should parse: {error}")
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WorkspacePolicyKind;
 
     #[test]
     fn slides_manifest_declares_expected_contract() {
@@ -288,5 +173,15 @@ mod tests {
                 .map(String::as_str),
             Some("out/index.html")
         );
+    }
+
+    #[test]
+    fn sites_manifest_bundles_only_generic_contract() {
+        let manifest = FirstPartyHarnessManifest::sites();
+
+        assert_eq!(manifest.id, "first_party.sites");
+        assert!(manifest.validation.on_turn_end.is_empty());
+        assert!(manifest.validation.on_completion.is_empty());
+        assert!(manifest.artifacts.entries.is_empty());
     }
 }
