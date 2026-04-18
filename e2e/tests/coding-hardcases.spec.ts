@@ -18,12 +18,16 @@
  *   OCTOS_PROFILE=dspfac \
  *   npx playwright test tests/coding-hardcases.spec.ts --list
  */
-import { test } from '@playwright/test';
+import { test, type Page } from '@playwright/test';
 
 import {
   createNewSession,
   login,
   sendAndWait,
+  getInput,
+  getSendButton,
+  getChatThreadText,
+  SEL,
   countAssistantBubbles,
   countUserBubbles,
 } from './live-browser-helpers';
@@ -42,6 +46,32 @@ async function getTasks(sessionId: string): Promise<any[]> {
     throw new Error(`failed to fetch tasks for ${sessionId}: ${resp.status}`);
   }
   return resp.json();
+}
+
+async function waitForRecoveredTurn(page: Page, timeoutMs = 180_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const assistantCount = await page.locator(SEL.assistantMessage).count();
+    const userCount = await page.locator(SEL.userMessage).count();
+    const streaming = await page
+      .locator(SEL.cancelButton)
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false);
+    const text =
+      assistantCount > 0
+        ? ((await page.locator(SEL.assistantMessage).last().textContent().catch(() => '')) || '')
+            .trim()
+        : '';
+
+    if (userCount === 1 && assistantCount === 1 && !streaming && text) {
+      return text;
+    }
+
+    await page.waitForTimeout(2_000);
+  }
+
+  throw new Error('Timed out waiting for the recovered coding turn to settle');
 }
 
 test.describe('Phase 3 coding hard cases', () => {
@@ -188,10 +218,45 @@ test.describe('Phase 3 coding hard cases', () => {
       .toBe(true);
   });
 
-  test.fixme('long idle resume keeps the same coding turn after reconnect', async ({ page }) => {
+  test('long idle resume keeps the same coding turn after reconnect', async ({ page }) => {
     await login(page);
     await createNewSession(page);
-    await sendAndWait(page, 'TODO: start long coding task, idle, reload, and verify turn merge');
+
+    const marker = `phase3-idle-${Date.now()}`;
+    const prompt = [
+      'Use shell tool only.',
+      `Inside the current workspace, create a temporary git repo named ${marker}.`,
+      'Inside it, create notes.txt with exactly 12 numbered lines about reconnect-safe coding work.',
+      `Replace line 12 so it contains the exact marker ${marker}.`,
+      'Run git diff -- notes.txt.',
+      'Then respond with exactly 10 numbered bullets summarizing the edit and recovery behavior.',
+      `Include ${marker} exactly once in bullet 10.`,
+      'Keep the final answer between 220 and 320 words so it streams long enough to survive reconnect.',
+      'Do not start background work.',
+    ].join(' ');
+
+    await getInput(page).fill(prompt);
+    await getSendButton(page).click();
+
+    await page.waitForFunction(
+      (selectors) =>
+        document.querySelectorAll(selectors.assistantMessage).length > 0 &&
+        document.querySelector(selectors.cancelButton) !== null,
+      SEL,
+      { timeout: 45_000 },
+    );
+
+    await page.waitForTimeout(15_000);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector(SEL.chatInput, { timeout: 15_000 });
+
+    const finalText = await waitForRecoveredTurn(page);
+    const threadText = await getChatThreadText(page);
+
+    test.expect(finalText).toContain(marker);
+    test.expect(threadText).toContain(marker);
+    test.expect(await countUserBubbles(page)).toBe(1);
+    test.expect(await countAssistantBubbles(page)).toBe(1);
   });
 
   test.fixme('concurrent coding sessions remain isolated under load', async ({ browser }) => {
