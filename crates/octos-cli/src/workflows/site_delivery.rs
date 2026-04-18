@@ -1,7 +1,5 @@
 use crate::workflow_runtime::workflow_families::SiteTemplate;
-use crate::workflow_runtime::{
-    WorkflowInstance, WorkflowKind, WorkflowLimits, WorkflowPhase, WorkflowTerminalOutput,
-};
+use crate::workflow_runtime::{WorkflowInstance, WorkflowKind};
 use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
 
 pub fn build_output_dir_for_template_kind(template: SiteTemplate) -> &'static str {
@@ -22,36 +20,7 @@ pub fn workspace_policy_for_template(template: &str) -> WorkspacePolicy {
 }
 
 pub fn build() -> WorkflowInstance {
-    let harness = FirstPartyHarnessManifest::sites();
-    WorkflowInstance {
-        kind: WorkflowKind::Site,
-        label: "Site deliverable".to_string(),
-        ack_message: "Site generation has started in the background. Only the final verified site entrypoint will be delivered once the workspace contract is satisfied.".to_string(),
-        current_phase: WorkflowPhase::new("scaffold"),
-        allowed_tools: vec![
-            "read_file".into(),
-            "write_file".into(),
-            "edit_file".into(),
-            "shell".into(),
-            "glob".into(),
-            "check_background_tasks".into(),
-            "check_workspace_contract".into(),
-        ],
-        limits: WorkflowLimits {
-            max_search_passes: None,
-            max_pipeline_runs: None,
-            max_dialogue_lines: Some(24),
-            target_audio_minutes: None,
-            max_generate_calls: Some(1),
-        },
-        terminal_output: WorkflowTerminalOutput {
-            deliver_final_artifact_only: harness.terminal_output.deliver_final_artifact_only,
-            deliver_media_only: harness.terminal_output.deliver_media_only,
-            forbid_intermediate_files: harness.terminal_output.forbid_intermediate_files,
-            required_artifact_kind: harness.terminal_output.required_artifact_kind,
-        },
-        additional_instructions: "You are a background site builder. Follow the runtime-owned phases in order: scaffold, build, deliver_result. Read the session metadata to discover the selected template and build output directory, keep edits inside the project root, and deliver only the final built site entrypoint. Do not send intermediate logs, scratch files, or alternate build artifacts.".to_string(),
-    }
+    super::build_first_party_workflow(WorkflowKind::Site, FirstPartyHarnessManifest::sites())
 }
 
 #[cfg(test)]
@@ -128,6 +97,32 @@ mod tests {
         assert_eq!(
             workflow.terminal_output.deliver_final_artifact_only,
             harness.terminal_output.deliver_final_artifact_only
+        );
+    }
+
+    #[test]
+    fn site_workflow_uses_first_party_harness_metadata() {
+        let workflow = build();
+        let harness = FirstPartyHarnessManifest::sites();
+
+        assert_eq!(workflow.label, harness.workflow.label);
+        assert_eq!(workflow.ack_message, harness.workflow.ack_message);
+        assert_eq!(
+            workflow.current_phase.as_str(),
+            harness.workflow.initial_phase
+        );
+        assert_eq!(workflow.allowed_tools, harness.workflow.allowed_tools);
+        assert_eq!(
+            workflow.limits.max_dialogue_lines,
+            harness.workflow.limits.max_dialogue_lines
+        );
+        assert_eq!(
+            workflow.limits.max_generate_calls,
+            harness.workflow.limits.max_generate_calls
+        );
+        assert_eq!(
+            workflow.additional_instructions,
+            harness.workflow.additional_instructions
         );
     }
 }
