@@ -46,14 +46,16 @@ pub use agent::{
 pub use event_bus::{EventBus, EventSubscriber};
 pub use exec_env::{DockerEnvironment, ExecEnvironment, ExecOutput, LocalEnvironment};
 pub use first_party_harness::{
-    FirstPartyHarnessManifest, FirstPartyHarnessName, FirstPartyHarnessRegistryEntry,
-    FirstPartyTerminalOutput, FirstPartyWorkflowDeclaration, FirstPartyWorkflowLimits,
-    first_party_harness_entry, first_party_harness_registry, resolve_first_party_harness_by_id,
+    FIRST_PARTY_SITES_HARNESS_ID, FIRST_PARTY_SLIDES_HARNESS_ID, FirstPartyHarnessManifest,
+    FirstPartyHarnessName, FirstPartyHarnessRegistryEntry, FirstPartyTerminalOutput,
+    FirstPartyWorkflowDeclaration, FirstPartyWorkflowLimits, first_party_harness_entry,
+    first_party_harness_registry, resolve_first_party_harness_by_id,
 };
 pub use first_party_harness_catalog::{
     FirstPartyHarnessDescriptor, ResolvedFirstPartyHarness, first_party_harness_catalog,
     first_party_harness_descriptor, resolve_first_party_harness,
-    resolve_first_party_harness_descriptor_by_id, resolve_first_party_harness_for_workspace_kind,
+    resolve_first_party_harness_by_manifest_id, resolve_first_party_harness_descriptor_by_id,
+    resolve_first_party_harness_for_workspace_kind,
 };
 pub use hooks::{HookConfig, HookContext, HookEvent, HookExecutor};
 pub use mcp::{McpClient, McpServerConfig};

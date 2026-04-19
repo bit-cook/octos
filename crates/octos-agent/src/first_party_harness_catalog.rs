@@ -1,5 +1,6 @@
 use crate::first_party_harness::{
-    FirstPartyHarnessManifest, FirstPartyHarnessName, resolve_first_party_harness_by_id,
+    FIRST_PARTY_SITES_HARNESS_ID, FIRST_PARTY_SLIDES_HARNESS_ID, FirstPartyHarnessManifest,
+    FirstPartyHarnessName, resolve_first_party_harness_by_id,
 };
 use crate::workspace_policy::WorkspacePolicyKind;
 
@@ -23,7 +24,7 @@ pub struct ResolvedFirstPartyHarness {
 const FIRST_PARTY_HARNESS_CATALOG: [FirstPartyHarnessDescriptor; 2] = [
     FirstPartyHarnessDescriptor {
         name: FirstPartyHarnessName::Slides,
-        manifest_id: "first_party.slides",
+        manifest_id: FIRST_PARTY_SLIDES_HARNESS_ID,
         display_name: "Slides",
         summary: "Background slide-deck production with final presentation delivery.",
         workspace_kind: WorkspacePolicyKind::Slides,
@@ -32,7 +33,7 @@ const FIRST_PARTY_HARNESS_CATALOG: [FirstPartyHarnessDescriptor; 2] = [
     },
     FirstPartyHarnessDescriptor {
         name: FirstPartyHarnessName::Sites,
-        manifest_id: "first_party.sites",
+        manifest_id: FIRST_PARTY_SITES_HARNESS_ID,
         display_name: "Sites",
         summary: "Background site builds with final verified entrypoint delivery.",
         workspace_kind: WorkspacePolicyKind::Sites,
@@ -72,6 +73,11 @@ pub fn resolve_first_party_harness(name: FirstPartyHarnessName) -> ResolvedFirst
         descriptor,
         manifest,
     }
+}
+
+pub fn resolve_first_party_harness_by_manifest_id(id: &str) -> Option<ResolvedFirstPartyHarness> {
+    resolve_first_party_harness_descriptor_by_id(id)
+        .map(|descriptor| resolve_first_party_harness(descriptor.name))
 }
 
 pub fn resolve_first_party_harness_descriptor_by_id(
@@ -117,7 +123,7 @@ mod tests {
 
     #[test]
     fn catalog_resolves_descriptor_by_manifest_id() {
-        let descriptor = resolve_first_party_harness_descriptor_by_id("first_party.sites")
+        let descriptor = resolve_first_party_harness_descriptor_by_id(FIRST_PARTY_SITES_HARNESS_ID)
             .expect("sites descriptor should resolve");
 
         assert_eq!(descriptor.name, FirstPartyHarnessName::Sites);
@@ -142,5 +148,14 @@ mod tests {
             resolved.manifest.terminal_output.required_artifact_kind,
             "site"
         );
+    }
+
+    #[test]
+    fn catalog_resolves_by_manifest_id() {
+        let resolved = resolve_first_party_harness_by_manifest_id(FIRST_PARTY_SLIDES_HARNESS_ID)
+            .expect("slides harness should resolve");
+
+        assert_eq!(resolved.descriptor.name, FirstPartyHarnessName::Slides);
+        assert_eq!(resolved.manifest.id, FIRST_PARTY_SLIDES_HARNESS_ID);
     }
 }

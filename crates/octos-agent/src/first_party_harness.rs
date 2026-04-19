@@ -10,6 +10,9 @@ use crate::workspace_policy::{
 const SLIDES_MANIFEST_TOML: &str = include_str!("first_party_harness/slides.toml");
 const SITES_MANIFEST_TOML: &str = include_str!("first_party_harness/sites.toml");
 
+pub const FIRST_PARTY_SLIDES_HARNESS_ID: &str = "first_party.slides";
+pub const FIRST_PARTY_SITES_HARNESS_ID: &str = "first_party.sites";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FirstPartyHarnessName {
@@ -35,6 +38,10 @@ impl FirstPartyHarnessName {
         crate::first_party_harness_catalog::resolve_first_party_harness(self)
     }
 
+    pub fn manifest_id(self) -> &'static str {
+        first_party_harness_entry(self).manifest_id
+    }
+
     pub fn manifest(self) -> FirstPartyHarnessManifest {
         first_party_harness_entry(self).load()
     }
@@ -56,12 +63,12 @@ impl FirstPartyHarnessRegistryEntry {
 const FIRST_PARTY_HARNESS_REGISTRY: [FirstPartyHarnessRegistryEntry; 2] = [
     FirstPartyHarnessRegistryEntry {
         name: FirstPartyHarnessName::Slides,
-        manifest_id: "first_party.slides",
+        manifest_id: FIRST_PARTY_SLIDES_HARNESS_ID,
         manifest_asset: "slides.toml",
     },
     FirstPartyHarnessRegistryEntry {
         name: FirstPartyHarnessName::Sites,
-        manifest_id: "first_party.sites",
+        manifest_id: FIRST_PARTY_SITES_HARNESS_ID,
         manifest_asset: "sites.toml",
     },
 ];
@@ -205,17 +212,17 @@ mod tests {
 
         assert_eq!(registry.len(), 2);
         assert_eq!(registry[0].name, FirstPartyHarnessName::Slides);
-        assert_eq!(registry[0].manifest_id, "first_party.slides");
+        assert_eq!(registry[0].manifest_id, FIRST_PARTY_SLIDES_HARNESS_ID);
         assert_eq!(registry[1].name, FirstPartyHarnessName::Sites);
-        assert_eq!(registry[1].manifest_id, "first_party.sites");
+        assert_eq!(registry[1].manifest_id, FIRST_PARTY_SITES_HARNESS_ID);
     }
 
     #[test]
     fn registry_resolves_manifest_by_id() {
-        let manifest = resolve_first_party_harness_by_id("first_party.slides")
+        let manifest = resolve_first_party_harness_by_id(FIRST_PARTY_SLIDES_HARNESS_ID)
             .expect("slides manifest should resolve");
 
-        assert_eq!(manifest.id, "first_party.slides");
+        assert_eq!(manifest.id, FIRST_PARTY_SLIDES_HARNESS_ID);
         assert_eq!(manifest.workflow.label, "Slides deliverable");
     }
 
@@ -223,7 +230,7 @@ mod tests {
     fn harness_name_exposes_descriptor_view() {
         let descriptor = FirstPartyHarnessName::Slides.descriptor();
 
-        assert_eq!(descriptor.manifest_id, "first_party.slides");
+        assert_eq!(descriptor.manifest_id, FIRST_PARTY_SLIDES_HARNESS_ID);
         assert_eq!(descriptor.output_kind, "presentation");
     }
 
@@ -232,7 +239,19 @@ mod tests {
         let resolved = FirstPartyHarnessName::Slides.resolved();
 
         assert_eq!(resolved.descriptor.name, FirstPartyHarnessName::Slides);
-        assert_eq!(resolved.manifest.id, "first_party.slides");
+        assert_eq!(resolved.manifest.id, FIRST_PARTY_SLIDES_HARNESS_ID);
+    }
+
+    #[test]
+    fn harness_name_exposes_manifest_id() {
+        assert_eq!(
+            FirstPartyHarnessName::Slides.manifest_id(),
+            FIRST_PARTY_SLIDES_HARNESS_ID
+        );
+        assert_eq!(
+            FirstPartyHarnessName::Sites.manifest_id(),
+            FIRST_PARTY_SITES_HARNESS_ID
+        );
     }
 
     #[test]
