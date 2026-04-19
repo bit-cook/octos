@@ -51,8 +51,9 @@ pub use first_party_harness::{
     first_party_harness_entry, first_party_harness_registry, resolve_first_party_harness_by_id,
 };
 pub use first_party_harness_catalog::{
-    FirstPartyHarnessDescriptor, first_party_harness_catalog, first_party_harness_descriptor,
-    resolve_first_party_harness_descriptor_by_id,
+    FirstPartyHarnessDescriptor, ResolvedFirstPartyHarness, first_party_harness_catalog,
+    first_party_harness_descriptor, resolve_first_party_harness,
+    resolve_first_party_harness_descriptor_by_id, resolve_first_party_harness_for_workspace_kind,
 };
 pub use hooks::{HookConfig, HookContext, HookEvent, HookExecutor};
 pub use mcp::{McpClient, McpServerConfig};

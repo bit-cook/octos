@@ -1,4 +1,6 @@
-use crate::first_party_harness::FirstPartyHarnessName;
+use crate::first_party_harness::{
+    FirstPartyHarnessManifest, FirstPartyHarnessName, resolve_first_party_harness_by_id,
+};
 use crate::workspace_policy::WorkspacePolicyKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,6 +12,12 @@ pub struct FirstPartyHarnessDescriptor {
     pub workspace_kind: WorkspacePolicyKind,
     pub output_kind: &'static str,
     pub supports_build_output_override: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedFirstPartyHarness {
+    pub descriptor: &'static FirstPartyHarnessDescriptor,
+    pub manifest: FirstPartyHarnessManifest,
 }
 
 const FIRST_PARTY_HARNESS_CATALOG: [FirstPartyHarnessDescriptor; 2] = [
@@ -51,12 +59,36 @@ pub fn first_party_harness_descriptor(
         })
 }
 
+pub fn resolve_first_party_harness(name: FirstPartyHarnessName) -> ResolvedFirstPartyHarness {
+    let descriptor = first_party_harness_descriptor(name);
+    let manifest = resolve_first_party_harness_by_id(descriptor.manifest_id).unwrap_or_else(|| {
+        panic!(
+            "missing first-party harness manifest {}",
+            descriptor.manifest_id
+        )
+    });
+
+    ResolvedFirstPartyHarness {
+        descriptor,
+        manifest,
+    }
+}
+
 pub fn resolve_first_party_harness_descriptor_by_id(
     id: &str,
 ) -> Option<&'static FirstPartyHarnessDescriptor> {
     first_party_harness_catalog()
         .iter()
         .find(|descriptor| descriptor.manifest_id == id)
+}
+
+pub fn resolve_first_party_harness_for_workspace_kind(
+    workspace_kind: WorkspacePolicyKind,
+) -> Option<ResolvedFirstPartyHarness> {
+    first_party_harness_catalog()
+        .iter()
+        .find(|descriptor| descriptor.workspace_kind == workspace_kind)
+        .map(|descriptor| resolve_first_party_harness(descriptor.name))
 }
 
 #[cfg(test)]
@@ -90,5 +122,25 @@ mod tests {
 
         assert_eq!(descriptor.name, FirstPartyHarnessName::Sites);
         assert_eq!(descriptor.output_kind, "site");
+    }
+
+    #[test]
+    fn catalog_resolves_manifest_and_descriptor_together() {
+        let resolved = resolve_first_party_harness(FirstPartyHarnessName::Slides);
+
+        assert_eq!(resolved.descriptor.manifest_id, resolved.manifest.id);
+        assert_eq!(resolved.descriptor.output_kind, "presentation");
+    }
+
+    #[test]
+    fn catalog_resolves_by_workspace_kind() {
+        let resolved = resolve_first_party_harness_for_workspace_kind(WorkspacePolicyKind::Sites)
+            .expect("sites harness should resolve");
+
+        assert_eq!(resolved.descriptor.name, FirstPartyHarnessName::Sites);
+        assert_eq!(
+            resolved.manifest.terminal_output.required_artifact_kind,
+            "site"
+        );
     }
 }

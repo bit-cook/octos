@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
-use crate::first_party_harness::{FirstPartyHarnessManifest, FirstPartyHarnessName};
+use crate::first_party_harness::FirstPartyHarnessManifest;
+use crate::first_party_harness_catalog::resolve_first_party_harness_for_workspace_kind;
 use crate::workspace_git::WorkspaceProjectKind;
 
 pub const WORKSPACE_POLICY_FILE: &str = ".octos-workspace.toml";
@@ -141,14 +142,16 @@ impl WorkspaceSpawnTaskPolicy {
 
 impl WorkspacePolicy {
     pub fn for_kind(kind: WorkspaceProjectKind) -> Self {
-        match kind {
-            WorkspaceProjectKind::Slides => {
-                FirstPartyHarnessName::Slides.manifest().workspace_policy()
-            }
-            WorkspaceProjectKind::Sites => {
-                FirstPartyHarnessName::Sites.manifest().workspace_policy()
-            }
-        }
+        let workspace_kind = WorkspacePolicyKind::from(kind);
+        resolve_first_party_harness_for_workspace_kind(workspace_kind)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing first-party harness for workspace kind {}",
+                    workspace_kind.as_str()
+                )
+            })
+            .manifest
+            .workspace_policy()
     }
 
     pub fn for_session() -> Self {

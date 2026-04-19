@@ -1,20 +1,18 @@
 use crate::workflow_runtime::{WorkflowInstance, WorkflowKind};
-use octos_agent::{FirstPartyHarnessName, WorkspacePolicy};
+use octos_agent::WorkspacePolicy;
 
 pub fn build() -> WorkflowInstance {
-    super::build_first_party_workflow(
-        WorkflowKind::Slides,
-        FirstPartyHarnessName::Slides.manifest(),
-    )
+    super::build_first_party_workflow(WorkflowKind::Slides)
 }
 
 pub fn workspace_policy() -> WorkspacePolicy {
-    FirstPartyHarnessName::Slides.manifest().workspace_policy()
+    super::workspace_policy_for_first_party_workflow(WorkflowKind::Slides)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octos_agent::FirstPartyHarnessName;
 
     #[test]
     fn build_slides_workflow_uses_presentation_output_contract() {

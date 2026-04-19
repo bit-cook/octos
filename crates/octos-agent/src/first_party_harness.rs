@@ -31,6 +31,10 @@ impl FirstPartyHarnessName {
         crate::first_party_harness_catalog::first_party_harness_descriptor(self)
     }
 
+    pub fn resolved(self) -> crate::first_party_harness_catalog::ResolvedFirstPartyHarness {
+        crate::first_party_harness_catalog::resolve_first_party_harness(self)
+    }
+
     pub fn manifest(self) -> FirstPartyHarnessManifest {
         first_party_harness_entry(self).load()
     }
@@ -221,6 +225,14 @@ mod tests {
 
         assert_eq!(descriptor.manifest_id, "first_party.slides");
         assert_eq!(descriptor.output_kind, "presentation");
+    }
+
+    #[test]
+    fn harness_name_exposes_resolved_view() {
+        let resolved = FirstPartyHarnessName::Slides.resolved();
+
+        assert_eq!(resolved.descriptor.name, FirstPartyHarnessName::Slides);
+        assert_eq!(resolved.manifest.id, "first_party.slides");
     }
 
     #[test]

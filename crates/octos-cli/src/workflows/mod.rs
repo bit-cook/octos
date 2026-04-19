@@ -3,18 +3,30 @@ pub mod research_report;
 pub mod site_delivery;
 pub mod slides_delivery;
 
-use octos_agent::FirstPartyHarnessManifest;
+use octos_agent::{
+    ResolvedFirstPartyHarness, WorkspacePolicy, WorkspacePolicyKind,
+    resolve_first_party_harness_for_workspace_kind,
+};
 
 use crate::workflow_runtime::{
     WorkflowInstance, WorkflowKind, WorkflowLimits, WorkflowPhase, WorkflowTerminalOutput,
 };
 
-pub(crate) fn build_first_party_workflow(
-    kind: WorkflowKind,
-    harness: FirstPartyHarnessManifest,
-) -> WorkflowInstance {
-    let workflow = harness.workflow;
-    let terminal_output = harness.terminal_output;
+fn resolve_first_party_workflow_harness(kind: WorkflowKind) -> ResolvedFirstPartyHarness {
+    let workspace_kind = match kind {
+        WorkflowKind::Slides => WorkspacePolicyKind::Slides,
+        WorkflowKind::Site => WorkspacePolicyKind::Sites,
+        other => panic!("workflow {other:?} does not have a first-party harness"),
+    };
+
+    resolve_first_party_harness_for_workspace_kind(workspace_kind)
+        .unwrap_or_else(|| panic!("missing first-party harness for workflow kind {:?}", kind))
+}
+
+pub(crate) fn build_first_party_workflow(kind: WorkflowKind) -> WorkflowInstance {
+    let harness = resolve_first_party_workflow_harness(kind);
+    let workflow = harness.manifest.workflow;
+    let terminal_output = harness.manifest.terminal_output;
 
     WorkflowInstance {
         kind,
@@ -37,4 +49,10 @@ pub(crate) fn build_first_party_workflow(
         },
         additional_instructions: workflow.additional_instructions,
     }
+}
+
+pub(crate) fn workspace_policy_for_first_party_workflow(kind: WorkflowKind) -> WorkspacePolicy {
+    resolve_first_party_workflow_harness(kind)
+        .manifest
+        .workspace_policy()
 }

@@ -1,6 +1,6 @@
 use crate::workflow_runtime::workflow_families::SiteTemplate;
 use crate::workflow_runtime::{WorkflowInstance, WorkflowKind};
-use octos_agent::{FirstPartyHarnessManifest, FirstPartyHarnessName, WorkspacePolicy};
+use octos_agent::{FirstPartyHarnessManifest, WorkspacePolicy};
 
 pub fn build_output_dir_for_template_kind(template: SiteTemplate) -> &'static str {
     template.output_dir()
@@ -20,12 +20,13 @@ pub fn workspace_policy_for_template(template: &str) -> WorkspacePolicy {
 }
 
 pub fn build() -> WorkflowInstance {
-    super::build_first_party_workflow(WorkflowKind::Site, FirstPartyHarnessName::Sites.manifest())
+    super::build_first_party_workflow(WorkflowKind::Site)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octos_agent::FirstPartyHarnessName;
 
     #[test]
     fn build_site_workflow_uses_site_output_contract() {
