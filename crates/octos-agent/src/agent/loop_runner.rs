@@ -924,7 +924,7 @@ fn merge_tool_messages_in_order(
 }
 
 fn recover_shell_retry_output(messages: &[Message], min_shell_streak: usize) -> Option<String> {
-    let recent = recent_tool_results(messages, min_shell_streak * 3);
+    let recent = recent_tool_results_since_last_user(messages);
     let shell_results: Vec<&str> = recent
         .iter()
         .filter(|(tool_name, _)| *tool_name == "shell")
@@ -962,11 +962,14 @@ fn recover_shell_retry_output(messages: &[Message], min_shell_streak: usize) -> 
         })
 }
 
-fn recent_tool_results(messages: &[Message], limit: usize) -> Vec<(String, String)> {
+fn recent_tool_results_since_last_user(messages: &[Message]) -> Vec<(String, String)> {
     let mut results = Vec::new();
 
     for idx in (0..messages.len()).rev() {
         let message = &messages[idx];
+        if message.role == MessageRole::User {
+            break;
+        }
         if message.role != MessageRole::Tool {
             continue;
         }
@@ -974,9 +977,6 @@ fn recent_tool_results(messages: &[Message], limit: usize) -> Vec<(String, Strin
             continue;
         };
         results.push((tool_name.to_string(), message.content.clone()));
-        if results.len() >= limit {
-            break;
-        }
     }
 
     results
@@ -1710,6 +1710,50 @@ mod tests {
         let recovered = recover_shell_retry_output(&messages, 4).expect("should recover");
         assert!(recovered.contains("diff --git"));
         assert!(!recovered.contains("Exit code: 0"));
+    }
+
+    #[test]
+    fn recover_shell_retry_output_scans_entire_turn_for_older_diff() {
+        let mut messages = vec![Message::user("repair the diff output")];
+
+        for idx in 0..30 {
+            messages.push(Message {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                media: vec![],
+                tool_calls: Some(vec![ToolCall {
+                    id: format!("call_shell_{idx}"),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": format!("shell command {idx}")}),
+                    metadata: None,
+                }]),
+                tool_call_id: None,
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            });
+
+            let content = if idx == 0 {
+                "diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n\nExit code: 0".to_string()
+            } else {
+                "alpha\ngamma\n\nExit code: 0".to_string()
+            };
+
+            messages.push(Message {
+                role: MessageRole::Tool,
+                content,
+                media: vec![],
+                tool_calls: None,
+                tool_call_id: Some(format!("call_shell_{idx}")),
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            });
+        }
+
+        let recovered = recover_shell_retry_output(&messages, 8).expect("should recover");
+        assert!(recovered.contains("diff --git"));
+        assert!(recovered.contains("notes.txt"));
+        assert!(recovered.contains("-beta"));
+        assert!(recovered.contains("+gamma"));
     }
 
     #[test]
