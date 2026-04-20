@@ -19,6 +19,7 @@ use octos_agent::{AgentConfig, HookContext, HookExecutor, ToolRegistry};
 use octos_bus::{
     ActiveSessionStore, ChannelManager, CronService, HeartbeatService, SessionManager, create_bus,
 };
+use octos_core::MAIN_PROFILE_ID;
 use octos_llm::{
     AdaptiveConfig, AdaptiveRouter, BaselineEntry, LlmProvider, ProviderChain, ProviderRouter,
     QosCatalog, RetryProvider, SwappableProvider,
