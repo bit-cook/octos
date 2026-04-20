@@ -88,22 +88,262 @@ fn extract_git_invocation(command: &str) -> Option<&str> {
     trimmed.find("git ").map(|idx| trimmed[idx..].trim())
 }
 
+fn is_git_repo_mismatch(output: &str) -> bool {
+    let lowered = output.to_ascii_lowercase();
+    lowered.contains("not a git repository")
+        || lowered.contains("outside a working tree")
+        || lowered.contains("use --no-index")
+}
+
+fn is_git_diff_command(command: &str) -> bool {
+    extract_git_invocation(command)
+        .map(|git_command| git_command.starts_with("git diff"))
+        .unwrap_or(false)
+}
+
+fn extract_git_diff_targets(command: &str) -> Vec<String> {
+    let Some(git_command) = extract_git_invocation(command) else {
+        return Vec::new();
+    };
+    if !git_command.starts_with("git diff") {
+        return Vec::new();
+    }
+    let Some((_, paths)) = git_command.split_once(" -- ") else {
+        return Vec::new();
+    };
+    paths.split_whitespace().map(str::to_string).collect()
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    format!("'{}'", raw.replace('\'', "'\"'\"'"))
+}
+
+fn collect_git_repos(root: &Path, remaining_depth: usize, repos: &mut Vec<PathBuf>) {
+    if remaining_depth == 0 {
+        return;
+    }
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.join(".git").is_dir() {
+            repos.push(path.clone());
+        }
+        collect_git_repos(&path, remaining_depth - 1, repos);
+    }
+}
+
+fn temp_search_roots() -> Vec<PathBuf> {
+    let mut roots = vec![std::env::temp_dir(), PathBuf::from("/tmp")];
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn select_best_git_repo_for_targets(targets: &[String]) -> Option<PathBuf> {
+    if targets.is_empty() {
+        return None;
+    }
+
+    let mut repos = Vec::new();
+    for root in temp_search_roots() {
+        collect_git_repos(&root, 2, &mut repos);
+    }
+    repos.sort();
+    repos.dedup();
+
+    repos
+        .into_iter()
+        .filter(|repo| targets.iter().all(|target| repo.join(target).exists()))
+        .max_by_key(|repo| {
+            targets
+                .iter()
+                .filter_map(|target| {
+                    std::fs::metadata(repo.join(target))
+                        .ok()
+                        .and_then(|meta| meta.modified().ok())
+                })
+                .max()
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+        })
+}
+
 fn enrich_shell_failure_output(command: &str, cwd: &Path, output: &str) -> String {
     let Some(git_command) = extract_git_invocation(command) else {
         return output.to_string();
     };
-    let lowered = output.to_ascii_lowercase();
-    if !lowered.contains("not a git repository")
-        && !lowered.contains("outside a working tree")
-        && !lowered.contains("use --no-index")
-    {
+    if !is_git_repo_mismatch(output) {
         return output.to_string();
     }
 
+    let repo_hint = if is_git_diff_command(command) {
+        select_best_git_repo_for_targets(&extract_git_diff_targets(command))
+            .map(|repo| format!("Likely repo root: {}\n", repo.display()))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+
     format!(
-        "{output}\n\nHint: This git command did not run inside a repository.\nCurrent shell cwd: {}\nShell tool invocations are stateless, so `cd` in one shell call does not persist into the next.\nIf the repo lives elsewhere, rerun the git command in the same shell call as the directory change, for example:\ncd /path/to/repo && {git_command}",
-        cwd.display()
+        "{output}\n\nHint: This git command did not run inside a repository.\nCurrent shell cwd: {}\n{}Shell tool invocations are stateless, so `cd` in one shell call does not persist into the next.\nIf the repo lives elsewhere, rerun the git command in the same shell call as the directory change, for example:\ncd /path/to/repo && {git_command}",
+        cwd.display(),
+        repo_hint
     )
+}
+
+async fn execute_shell_command(
+    sandbox: &dyn Sandbox,
+    command: &str,
+    cwd: &Path,
+    timeout_duration: Duration,
+) -> ToolResult {
+    // Execute command (through sandbox).
+    // Spawn the child, grab its PID, then timeout on wait_with_output().
+    // If timeout fires, kill by PID to prevent orphaned processes.
+    // (wait_with_output() takes ownership of child, so we save the PID first.)
+    let mut cmd = sandbox.wrap_command(command, cwd);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    apply_frontend_tool_env(&mut cmd, cwd);
+
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            return ToolResult {
+                output: format!("Failed to execute command: {e}"),
+                success: false,
+                ..Default::default()
+            };
+        }
+    };
+    let child_pid = child.id();
+
+    let result = timeout(timeout_duration, child.wait_with_output()).await;
+
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let exit_code = output.status.code().unwrap_or(-1);
+
+            let mut result_text = String::new();
+
+            if !stdout.is_empty() {
+                result_text.push_str(&stdout);
+            }
+
+            if !stderr.is_empty() {
+                if !result_text.is_empty() {
+                    result_text.push_str("\n--- stderr ---\n");
+                }
+                result_text.push_str(&stderr);
+            }
+
+            if result_text.is_empty() {
+                result_text = "(no output)".to_string();
+            }
+
+            let exit_suffix = format!("\n\nExit code: {exit_code}");
+            const MAX_OUTPUT: usize = 50000;
+            octos_core::truncate_utf8(
+                &mut result_text,
+                MAX_OUTPUT - exit_suffix.len(),
+                "\n... (output truncated)",
+            );
+            result_text.push_str(&exit_suffix);
+
+            ToolResult {
+                output: result_text,
+                success: output.status.success(),
+                ..Default::default()
+            }
+        }
+        Ok(Err(e)) => ToolResult {
+            output: format!("Failed to execute command: {e}"),
+            success: false,
+            ..Default::default()
+        },
+        Err(_) => {
+            #[cfg(unix)]
+            if let Some(pid) = child_pid {
+                use std::process::Command as StdCommand;
+
+                let _ = StdCommand::new("kill")
+                    .args(["-15", &format!("-{pid}")])
+                    .status();
+                let _ = StdCommand::new("kill")
+                    .args(["-15", &pid.to_string()])
+                    .status();
+
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                let still_alive = StdCommand::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .status()
+                    .is_ok_and(|s| s.success());
+
+                if still_alive {
+                    let _ = StdCommand::new("kill")
+                        .args(["-9", &format!("-{pid}")])
+                        .status();
+                    let _ = StdCommand::new("kill")
+                        .args(["-9", &pid.to_string()])
+                        .status();
+                }
+            }
+            #[cfg(windows)]
+            if let Some(pid) = child_pid {
+                use std::process::Command as StdCommand;
+                let _ = StdCommand::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .status();
+            }
+            ToolResult {
+                output: format!(
+                    "Command timed out after {} seconds",
+                    timeout_duration.as_secs()
+                ),
+                success: false,
+                ..Default::default()
+            }
+        }
+    }
+}
+
+async fn maybe_auto_recover_git_diff(
+    sandbox: &dyn Sandbox,
+    command: &str,
+    output: &str,
+    timeout_duration: Duration,
+) -> Option<ToolResult> {
+    if !is_git_diff_command(command) || !is_git_repo_mismatch(output) {
+        return None;
+    }
+
+    let repo_root = select_best_git_repo_for_targets(&extract_git_diff_targets(command))?;
+    let git_command = extract_git_invocation(command)?;
+    let recovered_command = format!("cd {} && {}", shell_quote_path(&repo_root), git_command);
+    let recovered = execute_shell_command(
+        sandbox,
+        &recovered_command,
+        Path::new("/"),
+        timeout_duration,
+    )
+    .await;
+
+    if recovered.success
+        && (recovered.output.contains("diff --git")
+            || (recovered.output.contains("\n--- ") && recovered.output.contains("\n+++ ")))
+    {
+        Some(recovered)
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -184,130 +424,30 @@ impl Tool for ShellTool {
             .map(|s| Duration::from_secs(s.clamp(MIN_TIMEOUT, MAX_TIMEOUT)))
             .unwrap_or(self.timeout);
 
-        // Execute command (through sandbox).
-        // Spawn the child, grab its PID, then timeout on wait_with_output().
-        // If timeout fires, kill by PID to prevent orphaned processes.
-        // (wait_with_output() takes ownership of child, so we save the PID first.)
-        let mut cmd = self.sandbox.wrap_command(&input.command, &self.cwd);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        apply_frontend_tool_env(&mut cmd, &self.cwd);
+        let mut result = execute_shell_command(
+            self.sandbox.as_ref(),
+            &input.command,
+            &self.cwd,
+            timeout_duration,
+        )
+        .await;
 
-        let child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(ToolResult {
-                    output: format!("Failed to execute command: {e}"),
-                    success: false,
-                    ..Default::default()
-                });
+        if !result.success {
+            if let Some(recovered) = maybe_auto_recover_git_diff(
+                self.sandbox.as_ref(),
+                &input.command,
+                &result.output,
+                timeout_duration,
+            )
+            .await
+            {
+                return Ok(recovered);
             }
-        };
-        let child_pid = child.id();
 
-        let result = timeout(timeout_duration, child.wait_with_output()).await;
-
-        match result {
-            Ok(Ok(output)) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let exit_code = output.status.code().unwrap_or(-1);
-
-                let mut result_text = String::new();
-
-                if !stdout.is_empty() {
-                    result_text.push_str(&stdout);
-                }
-
-                if !stderr.is_empty() {
-                    if !result_text.is_empty() {
-                        result_text.push_str("\n--- stderr ---\n");
-                    }
-                    result_text.push_str(&stderr);
-                }
-
-                if result_text.is_empty() {
-                    result_text = "(no output)".to_string();
-                }
-
-                if !output.status.success() {
-                    result_text =
-                        enrich_shell_failure_output(&input.command, &self.cwd, &result_text);
-                }
-
-                // Truncate if too long (reserve space for exit code suffix)
-                let exit_suffix = format!("\n\nExit code: {exit_code}");
-                const MAX_OUTPUT: usize = 50000;
-                octos_core::truncate_utf8(
-                    &mut result_text,
-                    MAX_OUTPUT - exit_suffix.len(),
-                    "\n... (output truncated)",
-                );
-
-                result_text.push_str(&exit_suffix);
-
-                Ok(ToolResult {
-                    output: result_text,
-                    success: output.status.success(),
-                    ..Default::default()
-                })
-            }
-            Ok(Err(e)) => Ok(ToolResult {
-                output: format!("Failed to execute command: {e}"),
-                success: false,
-                ..Default::default()
-            }),
-            Err(_) => {
-                // Graceful shutdown: SIGTERM first, then SIGKILL after grace period.
-                // wait_with_output() consumed the Child, so we kill via PID.
-                // Use negative PID to target the entire process group.
-                #[cfg(unix)]
-                if let Some(pid) = child_pid {
-                    use std::process::Command as StdCommand;
-
-                    // 1. Send SIGTERM to process group for graceful shutdown
-                    let _ = StdCommand::new("kill")
-                        .args(["-15", &format!("-{pid}")])
-                        .status();
-                    let _ = StdCommand::new("kill")
-                        .args(["-15", &pid.to_string()])
-                        .status();
-
-                    // 2. Brief grace period, then SIGKILL only if still alive.
-                    // Check /proc/{pid} (Linux) or kill -0 (portable) to avoid
-                    // killing a recycled PID.
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-
-                    let still_alive = StdCommand::new("kill")
-                        .args(["-0", &pid.to_string()])
-                        .status()
-                        .is_ok_and(|s| s.success());
-
-                    if still_alive {
-                        let _ = StdCommand::new("kill")
-                            .args(["-9", &format!("-{pid}")])
-                            .status();
-                        let _ = StdCommand::new("kill")
-                            .args(["-9", &pid.to_string()])
-                            .status();
-                    }
-                }
-                #[cfg(windows)]
-                if let Some(pid) = child_pid {
-                    use std::process::Command as StdCommand;
-                    let _ = StdCommand::new("taskkill")
-                        .args(["/F", "/T", "/PID", &pid.to_string()])
-                        .status();
-                }
-                Ok(ToolResult {
-                    output: format!(
-                        "Command timed out after {} seconds",
-                        timeout_duration.as_secs()
-                    ),
-                    success: false,
-                    ..Default::default()
-                })
-            }
+            result.output = enrich_shell_failure_output(&input.command, &self.cwd, &result.output);
         }
+
+        Ok(result)
     }
 }
 
@@ -407,5 +547,46 @@ mod tests {
         let enriched = enrich_shell_failure_output("cat missing-file", cwd, output);
 
         assert_eq!(enriched, output);
+    }
+
+    #[tokio::test]
+    async fn auto_recovers_git_diff_from_recent_temp_repo() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "octos-shell-recover-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+
+        let setup = ShellTool::new(&repo_root);
+        for command in [
+            "git init",
+            "printf 'alpha\\nbeta\\n' > notes.txt",
+            "git add notes.txt",
+            "git -c user.name=octos -c user.email=octos@example.com commit -m init",
+            "printf 'alpha\\ngamma\\n' > notes.txt",
+        ] {
+            let result = setup
+                .execute(&serde_json::json!({ "command": command }))
+                .await
+                .unwrap();
+            assert!(result.success, "{command} failed: {}", result.output);
+        }
+
+        let tool = ShellTool::new(std::env::temp_dir());
+        let result = tool
+            .execute(&serde_json::json!({ "command": "git diff -- notes.txt" }))
+            .await
+            .unwrap();
+
+        assert!(result.success, "auto-recovery failed: {}", result.output);
+        assert!(result.output.contains("diff --git"));
+        assert!(result.output.contains("-beta"));
+        assert!(result.output.contains("+gamma"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
     }
 }
