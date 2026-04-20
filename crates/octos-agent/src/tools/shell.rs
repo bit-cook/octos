@@ -108,6 +108,21 @@ fn is_git_repo_mismatch(output: &str) -> bool {
         || lowered.contains("use --no-index")
 }
 
+fn is_bsd_sed_inplace_error(output: &str) -> bool {
+    output.contains("extra characters at the end of n command")
+        || output.contains("invalid command code")
+}
+
+fn rewrite_gnu_sed_inplace(command: &str) -> Option<String> {
+    if !command.contains("sed -i ") {
+        return None;
+    }
+    if command.contains("sed -i ''") || command.contains("sed -i''") {
+        return None;
+    }
+    Some(command.replacen("sed -i ", "sed -i '' ", 1))
+}
+
 fn is_git_diff_command(command: &str) -> bool {
     extract_git_invocation(command)
         .map(|git_command| git_command.starts_with("git diff"))
@@ -360,6 +375,31 @@ async fn maybe_auto_recover_git_diff(
     }
 }
 
+async fn maybe_auto_recover_bsd_sed_inplace(
+    sandbox: &dyn Sandbox,
+    command: &str,
+    output: &str,
+    cwd: &Path,
+    timeout_duration: Duration,
+) -> Option<ToolResult> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (sandbox, command, output, cwd, timeout_duration);
+        return None;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if !is_bsd_sed_inplace_error(output) {
+            return None;
+        }
+        let recovered_command = rewrite_gnu_sed_inplace(command)?;
+        let recovered =
+            execute_shell_command(sandbox, &recovered_command, cwd, timeout_duration).await;
+        return recovered.success.then_some(recovered);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ShellInput {
     command: String,
@@ -447,6 +487,18 @@ impl Tool for ShellTool {
         .await;
 
         if !result.success {
+            if let Some(recovered) = maybe_auto_recover_bsd_sed_inplace(
+                self.sandbox.as_ref(),
+                &input.command,
+                &result.output,
+                &self.cwd,
+                timeout_duration,
+            )
+            .await
+            {
+                return Ok(recovered);
+            }
+
             if let Some(recovered) = maybe_auto_recover_git_diff(
                 self.sandbox.as_ref(),
                 &input.command,
@@ -625,6 +677,34 @@ mod tests {
         assert!(result.output.contains("diff --git"));
         assert!(result.output.contains("-beta"));
         assert!(result.output.contains("+gamma"));
+
+        let _ = std::fs::remove_dir_all(&repo_root);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn auto_recovers_gnu_sed_inplace_for_bsd_sed() {
+        let repo_root = std::env::temp_dir().join(format!(
+            "octos-shell-sed-recover-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&repo_root).unwrap();
+
+        let tool = ShellTool::new(&repo_root);
+        let result = tool
+            .execute(&serde_json::json!({
+                "command": "printf 'alpha\\nbeta\\n' > notes.txt && sed -i 's/beta/gamma/' notes.txt && cat notes.txt"
+            }))
+            .await
+            .unwrap();
+
+        assert!(result.success, "sed recovery failed: {}", result.output);
+        assert!(result.output.contains("alpha"));
+        assert!(result.output.contains("gamma"));
 
         let _ = std::fs::remove_dir_all(&repo_root);
     }
