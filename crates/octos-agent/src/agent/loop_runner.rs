@@ -24,10 +24,10 @@ use crate::tools::{TURN_ATTACHMENT_CTX, TurnAttachmentContext};
 const MAX_PARALLEL_TOOL_CALLS_PER_BATCH: usize = 8;
 const SHELL_RETRY_RECOVERY_THRESHOLD: usize = 4;
 
-fn split_tool_calls<'a>(
-    tool_calls: &'a [octos_core::ToolCall],
+fn split_tool_calls(
+    tool_calls: &[octos_core::ToolCall],
     batch_size: usize,
-) -> Vec<&'a [octos_core::ToolCall]> {
+) -> Vec<&[octos_core::ToolCall]> {
     debug_assert!(batch_size > 0);
     tool_calls.chunks(batch_size).collect()
 }
@@ -931,20 +931,20 @@ fn recover_shell_retry_output(messages: &[Message], min_shell_streak: usize) -> 
         .map(|(_, content)| content.as_str())
         .collect();
 
-    if shell_results.len() < min_shell_streak {
-        return None;
-    }
-
-    let failed_shells = shell_results
-        .iter()
-        .filter(|content| !is_successful_shell_output(content))
-        .count();
-
     shell_results
         .iter()
         .find(|content| is_diff_like_shell_output(content))
         .map(|content| strip_success_exit_suffix(content))
         .or_else(|| {
+            if shell_results.len() < min_shell_streak {
+                return None;
+            }
+
+            let failed_shells = shell_results
+                .iter()
+                .filter(|content| !is_successful_shell_output(content))
+                .count();
+
             (failed_shells >= 2)
                 .then(|| {
                     shell_results
@@ -953,12 +953,12 @@ fn recover_shell_retry_output(messages: &[Message], min_shell_streak: usize) -> 
                 })
                 .flatten()
                 .map(|content| strip_success_exit_suffix(content))
-        })
-        .or_else(|| {
-            (failed_shells >= min_shell_streak.saturating_sub(1))
-                .then(|| shell_results.first().copied())
-                .flatten()
-                .map(shell_retry_limit_message)
+                .or_else(|| {
+                    (failed_shells >= min_shell_streak.saturating_sub(1))
+                        .then(|| shell_results.first().copied())
+                        .flatten()
+                        .map(shell_retry_limit_message)
+                })
         })
 }
 
@@ -1394,7 +1394,7 @@ mod tests {
         let agent = Agent::new(AgentId::new("test-agent"), provider, tools, memory);
 
         let result = agent.process_message("do work", &[], vec![]).await.unwrap();
-        let roles: Vec<MessageRole> = result.messages.iter().map(|m| m.role.clone()).collect();
+        let roles: Vec<MessageRole> = result.messages.iter().map(|m| m.role).collect();
         assert_eq!(
             roles,
             vec![
@@ -1813,5 +1813,76 @@ mod tests {
         let recovered = recover_shell_retry_output(&messages, 4).expect("should stop");
         assert!(recovered.contains("[SHELL RETRY LIMIT]"));
         assert!(recovered.contains("could not find Cargo.toml"));
+    }
+
+    #[test]
+    fn recover_shell_retry_output_returns_diff_before_retry_threshold() {
+        let messages = vec![
+            Message::user("show the recovered diff"),
+            Message {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                media: vec![],
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_shell_1".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": "git diff -- notes.txt"}),
+                    metadata: None,
+                }]),
+                tool_call_id: None,
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+            Message {
+                role: MessageRole::Tool,
+                content: "fatal: not a git repository\n\nExit code: 128".into(),
+                media: vec![],
+                tool_calls: None,
+                tool_call_id: Some("call_shell_1".into()),
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                media: vec![],
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_shell_2".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": "git diff -- notes.txt"}),
+                    metadata: None,
+                }]),
+                tool_call_id: None,
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+            Message {
+                role: MessageRole::Tool,
+                content: "diff --git a/notes.txt b/notes.txt\n--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n alpha\n-beta\n+gamma\n\nExit code: 0".into(),
+                media: vec![],
+                tool_calls: None,
+                tool_call_id: Some("call_shell_2".into()),
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+            Message {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                media: vec![],
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_shell_3".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command": "git diff -- notes.txt"}),
+                    metadata: None,
+                }]),
+                tool_call_id: None,
+                reasoning_content: None,
+                timestamp: chrono::Utc::now(),
+            },
+        ];
+
+        let recovered = recover_shell_retry_output(&messages, 4).expect("should recover diff");
+        assert!(recovered.contains("diff --git"));
+        assert!(!recovered.contains("Exit code: 0"));
     }
 }
