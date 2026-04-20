@@ -88,6 +88,19 @@ fn extract_git_invocation(command: &str) -> Option<&str> {
     trimmed.find("git ").map(|idx| trimmed[idx..].trim())
 }
 
+#[cfg(windows)]
+const NULL_DEVICE_PATH: &str = "NUL";
+#[cfg(not(windows))]
+const NULL_DEVICE_PATH: &str = "/dev/null";
+
+fn apply_git_safe_env(cmd: &mut tokio::process::Command) {
+    // Shell commands may invoke git indirectly (for example via sh/python wrappers),
+    // so apply the git config scrub at the shell boundary instead of relying on
+    // direct `git ...` command detection.
+    cmd.env("GIT_CONFIG_GLOBAL", NULL_DEVICE_PATH)
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+}
+
 fn is_git_repo_mismatch(output: &str) -> bool {
     let lowered = output.to_ascii_lowercase();
     lowered.contains("not a git repository")
@@ -209,6 +222,7 @@ async fn execute_shell_command(
     // (wait_with_output() takes ownership of child, so we save the PID first.)
     let mut cmd = sandbox.wrap_command(command, cwd);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    apply_git_safe_env(&mut cmd);
     apply_frontend_tool_env(&mut cmd, cwd);
 
     let child = match cmd.spawn() {
@@ -525,6 +539,31 @@ mod tests {
         let cache = lines.next().unwrap_or_default();
         assert!(cache.contains("octos-frontend-tool-cache"));
         assert!(!cache.contains(".octos-tool-cache"));
+    }
+
+    #[test]
+    fn shell_commands_always_scrub_git_config_lookup() {
+        let mut cmd = tokio::process::Command::new("sh");
+        apply_git_safe_env(&mut cmd);
+
+        let envs: Vec<_> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().to_string(),
+                    value.map(|v| v.to_string_lossy().to_string()),
+                )
+            })
+            .collect();
+
+        assert!(envs.iter().any(|(key, value)| {
+            key == "GIT_CONFIG_GLOBAL" && value.as_deref() == Some(NULL_DEVICE_PATH)
+        }));
+        assert!(
+            envs.iter()
+                .any(|(key, value)| key == "GIT_CONFIG_NOSYSTEM" && value.as_deref() == Some("1"))
+        );
     }
 
     #[test]
