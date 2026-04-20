@@ -80,6 +80,32 @@ fn apply_frontend_tool_env(cmd: &mut tokio::process::Command, cwd: &Path) {
         .env("npm_config_cache", &cache_dir);
 }
 
+fn extract_git_invocation(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+    if trimmed.starts_with("git ") {
+        return Some(trimmed);
+    }
+    trimmed.find("git ").map(|idx| trimmed[idx..].trim())
+}
+
+fn enrich_shell_failure_output(command: &str, cwd: &Path, output: &str) -> String {
+    let Some(git_command) = extract_git_invocation(command) else {
+        return output.to_string();
+    };
+    let lowered = output.to_ascii_lowercase();
+    if !lowered.contains("not a git repository")
+        && !lowered.contains("outside a working tree")
+        && !lowered.contains("use --no-index")
+    {
+        return output.to_string();
+    }
+
+    format!(
+        "{output}\n\nHint: This git command did not run inside a repository.\nCurrent shell cwd: {}\nShell tool invocations are stateless, so `cd` in one shell call does not persist into the next.\nIf the repo lives elsewhere, rerun the git command in the same shell call as the directory change, for example:\ncd /path/to/repo && {git_command}",
+        cwd.display()
+    )
+}
+
 #[derive(Debug, Deserialize)]
 struct ShellInput {
     command: String,
@@ -201,6 +227,11 @@ impl Tool for ShellTool {
 
                 if result_text.is_empty() {
                     result_text = "(no output)".to_string();
+                }
+
+                if !output.status.success() {
+                    result_text =
+                        enrich_shell_failure_output(&input.command, &self.cwd, &result_text);
                 }
 
                 // Truncate if too long (reserve space for exit code suffix)
@@ -354,5 +385,27 @@ mod tests {
         let cache = lines.next().unwrap_or_default();
         assert!(cache.contains("octos-frontend-tool-cache"));
         assert!(!cache.contains(".octos-tool-cache"));
+    }
+
+    #[test]
+    fn enrich_shell_failure_output_adds_git_repo_recovery_hint() {
+        let cwd = std::path::Path::new("/tmp/octos-session");
+        let output = "warning: Not a git repository. Use --no-index to compare two paths outside a working tree";
+
+        let enriched = enrich_shell_failure_output("git diff -- notes.txt", cwd, output);
+
+        assert!(enriched.contains("Current shell cwd: /tmp/octos-session"));
+        assert!(enriched.contains("cd` in one shell call does not persist into the next"));
+        assert!(enriched.contains("cd /path/to/repo && git diff -- notes.txt"));
+    }
+
+    #[test]
+    fn enrich_shell_failure_output_ignores_non_git_errors() {
+        let cwd = std::path::Path::new("/tmp/octos-session");
+        let output = "cat: missing-file: No such file or directory";
+
+        let enriched = enrich_shell_failure_output("cat missing-file", cwd, output);
+
+        assert_eq!(enriched, output);
     }
 }
